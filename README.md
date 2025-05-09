@@ -1,4 +1,4 @@
-# COVID-19 Data Prediction
+# COVID-19 Demographic Analytics
 
 ## Overview
 This project provides a robust framework for COVID-19 data analysis and predictive modeling using the public dataset from [Our World in Data](https://ourworldindata.org/covid-cases).
