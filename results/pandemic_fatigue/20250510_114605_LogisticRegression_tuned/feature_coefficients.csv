@@ -1,0 +1,7 @@
+feature,importance_coefficient
+stringency_index_smoothed,0.6522751655408456
+reproduction_rate_smoothed,0.4878963497494999
+new_tests_smoothed_per_thousand_smoothed,0.3296519986985595
+new_cases_smoothed_per_million_smoothed,-0.18642527606419948
+positive_rate_smoothed,0.167916201132245
+people_vaccinated_per_hundred_smoothed,0.0055521329451109795

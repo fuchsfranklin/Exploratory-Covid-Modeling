@@ -1,0 +1,83 @@
+{
+  "countries_analyzed": [
+    "United States",
+    "United Kingdom",
+    "Germany",
+    "France",
+    "Italy",
+    "Spain",
+    "Canada",
+    "Brazil",
+    "India",
+    "Sweden"
+  ],
+  "policy_outcome_pairs": {
+    "stringency_index_new_cases_smoothed_per_million": {
+      "all_lag_estimates": [],
+      "significant_countries": [],
+      "country_specific_lags": {}
+    },
+    "stringency_index_new_deaths_smoothed_per_million": {
+      "all_lag_estimates": [],
+      "significant_countries": [],
+      "country_specific_lags": {}
+    },
+    "stringency_index_reproduction_rate": {
+      "all_lag_estimates": [],
+      "significant_countries": [],
+      "country_specific_lags": {}
+    }
+  },
+  "country_statistics": {
+    "United States": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "United Kingdom": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Germany": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "France": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Italy": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Spain": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Canada": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Brazil": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "India": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    },
+    "Sweden": {
+      "significant_pairs": [],
+      "median_lag": null,
+      "lag_range": null
+    }
+  }
+}

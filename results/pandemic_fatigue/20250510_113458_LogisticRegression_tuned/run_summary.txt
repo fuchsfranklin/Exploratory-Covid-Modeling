@@ -1,0 +1,62 @@
+Run ID: 20250510_113458_LogisticRegression_tuned
+Model Type: LogisticRegression
+Hyperparameters Tuned: True
+Best Hyperparameters: {'model__C': 0.01, 'model__class_weight': 'balanced', 'model__solver': 'liblinear'}
+Target Variable: fatigue_label
+Fatigue Definition Parameters: {
+  "stringency_col_raw": "stringency_index",
+  "proxy_col_raw_options": [
+    "positive_rate",
+    "new_cases_smoothed_per_million"
+  ],
+  "stringency_percentile_threshold": 0.7,
+  "min_sustained_high_stringency_days": 21,
+  "proxy_lookback_window": 10,
+  "proxy_increase_threshold_factor": 1.05
+}
+
+Evaluation Metrics:
+{
+  "accuracy": 1.0,
+  "f1_score_weighted": 1.0,
+  "roc_auc": null,
+  "classification_report": {
+    "0": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4193.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4193.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4193.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      4193
+    ]
+  ]
+}
+
+Top Features/Coefficients:
+                                    feature  importance_coefficient
+5                 stringency_index_smoothed                1.321388
+1                reproduction_rate_smoothed                0.763981
+4    people_vaccinated_per_hundred_smoothed               -0.705243
+3  new_tests_smoothed_per_thousand_smoothed                0.516259
+0   new_cases_smoothed_per_million_smoothed               -0.103294
+2                    positive_rate_smoothed                0.099132
+
+Notes: Pandemic Fatigue Prediction Run.
+
+Results saved in: results/pandemic_fatigue\20250510_113458_LogisticRegression_tuned

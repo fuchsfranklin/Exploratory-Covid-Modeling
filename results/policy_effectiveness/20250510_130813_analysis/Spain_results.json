@@ -1,0 +1,31 @@
+{
+  "country": "Spain",
+  "summary": {
+    "stringency_index_new_cases_smoothed_per_million": {
+      "lag_estimates": [],
+      "consensus": {
+        "significant_methods": 0,
+        "total_methods": 3
+      }
+    },
+    "stringency_index_new_deaths_smoothed_per_million": {
+      "lag_estimates": [],
+      "consensus": {
+        "significant_methods": 0,
+        "total_methods": 3
+      }
+    },
+    "stringency_index_reproduction_rate": {
+      "lag_estimates": [],
+      "consensus": {
+        "significant_methods": 0,
+        "total_methods": 3
+      }
+    }
+  },
+  "methods": {
+    "ccf": {},
+    "granger": {},
+    "transfer": {}
+  }
+}

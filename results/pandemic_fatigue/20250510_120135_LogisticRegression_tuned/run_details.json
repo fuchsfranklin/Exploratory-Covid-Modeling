@@ -1,0 +1,126 @@
+{
+    "run_id": "20250510_120135_LogisticRegression_tuned",
+    "timestamp": "2025-05-10T12:01:56.667476",
+    "data_path": "owid-covid-data.csv",
+    "target_variable": "fatigue_label",
+    "model_type": "LogisticRegression",
+    "hyperparameters_tuned": true,
+    "best_hyperparameters": {
+        "model__C": 0.1,
+        "model__class_weight": null,
+        "model__solver": "liblinear"
+    },
+    "fatigue_definition_parameters": {
+        "stringency_col_raw": "stringency_index",
+        "proxy_col_raw_options": [
+            "positive_rate",
+            "new_cases_smoothed_per_million"
+        ],
+        "stringency_percentile_threshold": 0.6,
+        "min_sustained_high_stringency_days": 14,
+        "proxy_lookback_window": 7,
+        "proxy_increase_threshold_factor": 1.03
+    },
+    "feature_names": [
+        "people_vaccinated_per_hundred_smoothed",
+        "new_tests_smoothed_per_thousand_smoothed",
+        "reproduction_rate_smoothed",
+        "new_cases_smoothed_per_million_smoothed",
+        "positive_rate_smoothed",
+        "stringency_index_smoothed",
+        "people_vaccinated_per_hundred_smoothed_x_stringency",
+        "new_tests_smoothed_per_thousand_smoothed_x_stringency",
+        "reproduction_rate_smoothed_x_stringency",
+        "new_cases_smoothed_per_million_smoothed_x_stringency",
+        "positive_rate_smoothed_x_stringency",
+        "stringency_volatility",
+        "people_vaccinated_per_hundred_smoothed_roll7_std",
+        "people_vaccinated_per_hundred_smoothed_zscore",
+        "new_tests_smoothed_per_thousand_smoothed_roll7_std",
+        "new_tests_smoothed_per_thousand_smoothed_zscore",
+        "reproduction_rate_smoothed_roll7_std",
+        "reproduction_rate_smoothed_zscore",
+        "new_cases_smoothed_per_million_smoothed_roll7_std",
+        "new_cases_smoothed_per_million_smoothed_zscore",
+        "positive_rate_smoothed_roll7_std",
+        "positive_rate_smoothed_zscore",
+        "new_cases_smoothed_per_million_smoothed_squared",
+        "positive_rate_smoothed_squared"
+    ],
+    "train_data_shape": [
+        [
+            6686,
+            24
+        ],
+        [
+            6686
+        ]
+    ],
+    "test_data_shape": [
+        [
+            10065,
+            24
+        ],
+        [
+            10065
+        ]
+    ],
+    "evaluation_metrics": {
+        "accuracy": 0.9377049180327869,
+        "f1_score_weighted": 0.9455975949700518,
+        "f1_score_macro": 0.786043819696321,
+        "f1_score_class_0": 0.9661794055774314,
+        "f1_score_class_1": 0.6059082338152105,
+        "roc_auc": 0.9129996792962843,
+        "classification_report": {
+            "0": {
+                "precision": 0.9897226212841198,
+                "recall": 0.9437302423603794,
+                "f1-score": 0.9661794055774314,
+                "support": 9490.0
+            },
+            "1": {
+                "precision": 0.4744094488188976,
+                "recall": 0.8382608695652174,
+                "f1-score": 0.6059082338152105,
+                "support": 575.0
+            },
+            "accuracy": 0.9377049180327869,
+            "macro avg": {
+                "precision": 0.7320660350515087,
+                "recall": 0.8909955559627984,
+                "f1-score": 0.786043819696321,
+                "support": 10065.0
+            },
+            "weighted avg": {
+                "precision": 0.9602834683613676,
+                "recall": 0.9377049180327869,
+                "f1-score": 0.9455975949700518,
+                "support": 10065.0
+            }
+        },
+        "confusion_matrix": [
+            [
+                8956,
+                534
+            ],
+            [
+                93,
+                482
+            ]
+        ],
+        "sensitivity": 0.8382608695652174,
+        "specificity": 0.9437302423603794,
+        "balanced_accuracy": 0.8909955559627984,
+        "precision": 0.4744094488188976
+    },
+    "notes": "Pandemic Fatigue Prediction Run.",
+    "target_class_distribution_train": {
+        "0": 0.7406521088842357,
+        "1": 0.2593478911157643
+    },
+    "target_class_distribution_test": {
+        "0": 0.9428713363139593,
+        "1": 0.057128663686040734
+    }
+}

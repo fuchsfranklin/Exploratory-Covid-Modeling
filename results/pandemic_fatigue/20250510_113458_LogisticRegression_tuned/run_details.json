@@ -1,0 +1,89 @@
+{
+    "run_id": "20250510_113458_LogisticRegression_tuned",
+    "timestamp": "2025-05-10T11:35:01.983589",
+    "data_path": "owid-covid-data.csv",
+    "target_variable": "fatigue_label",
+    "model_type": "LogisticRegression",
+    "hyperparameters_tuned": true,
+    "best_hyperparameters": {
+        "model__C": 0.01,
+        "model__class_weight": "balanced",
+        "model__solver": "liblinear"
+    },
+    "fatigue_definition_parameters": {
+        "stringency_col_raw": "stringency_index",
+        "proxy_col_raw_options": [
+            "positive_rate",
+            "new_cases_smoothed_per_million"
+        ],
+        "stringency_percentile_threshold": 0.7,
+        "min_sustained_high_stringency_days": 21,
+        "proxy_lookback_window": 10,
+        "proxy_increase_threshold_factor": 1.05
+    },
+    "feature_names": [
+        "new_cases_smoothed_per_million_smoothed",
+        "reproduction_rate_smoothed",
+        "positive_rate_smoothed",
+        "new_tests_smoothed_per_thousand_smoothed",
+        "people_vaccinated_per_hundred_smoothed",
+        "stringency_index_smoothed"
+    ],
+    "train_data_shape": [
+        [
+            12558,
+            6
+        ],
+        [
+            12558
+        ]
+    ],
+    "test_data_shape": [
+        [
+            4193,
+            6
+        ],
+        [
+            4193
+        ]
+    ],
+    "evaluation_metrics": {
+        "accuracy": 1.0,
+        "f1_score_weighted": 1.0,
+        "roc_auc": null,
+        "classification_report": {
+            "0": {
+                "precision": 1.0,
+                "recall": 1.0,
+                "f1-score": 1.0,
+                "support": 4193.0
+            },
+            "accuracy": 1.0,
+            "macro avg": {
+                "precision": 1.0,
+                "recall": 1.0,
+                "f1-score": 1.0,
+                "support": 4193.0
+            },
+            "weighted avg": {
+                "precision": 1.0,
+                "recall": 1.0,
+                "f1-score": 1.0,
+                "support": 4193.0
+            }
+        },
+        "confusion_matrix": [
+            [
+                4193
+            ]
+        ]
+    },
+    "notes": "Pandemic Fatigue Prediction Run.",
+    "target_class_distribution_train": {
+        "0": 0.8838190794712534,
+        "1": 0.11618092052874661
+    },
+    "target_class_distribution_test": {
+        "0": 1.0
+    }
+}

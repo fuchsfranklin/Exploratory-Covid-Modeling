@@ -1,0 +1,97 @@
+{
+    "run_id": "20250510_114640_LogisticRegression_default",
+    "timestamp": "2025-05-10T11:46:43.385911",
+    "data_path": "owid-covid-data.csv",
+    "target_variable": "fatigue_label",
+    "model_type": "LogisticRegression",
+    "hyperparameters_tuned": false,
+    "best_hyperparameters": "N/A",
+    "fatigue_definition_parameters": {
+        "stringency_col_raw": "stringency_index",
+        "proxy_col_raw_options": [
+            "positive_rate",
+            "new_cases_smoothed_per_million"
+        ],
+        "stringency_percentile_threshold": 0.6,
+        "min_sustained_high_stringency_days": 14,
+        "proxy_lookback_window": 7,
+        "proxy_increase_threshold_factor": 1.03
+    },
+    "feature_names": [
+        "reproduction_rate_smoothed",
+        "people_vaccinated_per_hundred_smoothed",
+        "positive_rate_smoothed",
+        "stringency_index_smoothed",
+        "new_tests_smoothed_per_thousand_smoothed",
+        "new_cases_smoothed_per_million_smoothed"
+    ],
+    "train_data_shape": [
+        [
+            6686,
+            6
+        ],
+        [
+            6686
+        ]
+    ],
+    "test_data_shape": [
+        [
+            10065,
+            6
+        ],
+        [
+            10065
+        ]
+    ],
+    "evaluation_metrics": {
+        "accuracy": 0.6114257327372081,
+        "f1_score_weighted": 0.7131121013851242,
+        "roc_auc": 0.7159461217757822,
+        "classification_report": {
+            "0": {
+                "precision": 0.9748085106382979,
+                "recall": 0.603477344573235,
+                "f1-score": 0.7454604620891637,
+                "support": 9490.0
+            },
+            "1": {
+                "precision": 0.10190930787589499,
+                "recall": 0.7426086956521739,
+                "f1-score": 0.17922350472193072,
+                "support": 575.0
+            },
+            "accuracy": 0.6114257327372081,
+            "macro avg": {
+                "precision": 0.5383589092570964,
+                "recall": 0.6730430201127044,
+                "f1-score": 0.4623419834055472,
+                "support": 10065.0
+            },
+            "weighted avg": {
+                "precision": 0.9249409456518713,
+                "recall": 0.6114257327372081,
+                "f1-score": 0.7131121013851242,
+                "support": 10065.0
+            }
+        },
+        "confusion_matrix": [
+            [
+                5727,
+                3763
+            ],
+            [
+                148,
+                427
+            ]
+        ]
+    },
+    "notes": "Pandemic Fatigue Prediction Run.",
+    "target_class_distribution_train": {
+        "0": 0.7406521088842357,
+        "1": 0.2593478911157643
+    },
+    "target_class_distribution_test": {
+        "0": 0.9428713363139593,
+        "1": 0.057128663686040734
+    }
+}
