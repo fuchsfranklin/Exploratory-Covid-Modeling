@@ -138,6 +138,4 @@ lag_results = analyzer.analyze_policy_lags(country='France', method='ccf')
 MIT License
 
 ## Contributors
-- Project Lead: [Your Name]
-- Data Analysis: [Contributor Names]
-- Modeling: [Contributor Names]
+Franklin Fuchs
