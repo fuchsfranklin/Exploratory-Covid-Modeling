@@ -1,4 +1,4 @@
-# Exploratory COVID-19 Modeling: Because there Weren't Already Enough Predictive COVID-19 Projects
+# Exploratory COVID-19 Modeling: Because There Weren't Already Enough Predictive COVID-19 Projects
 
 *Because if there’s one thing the world was missing, it was my take on COVID-19 modeling (not).*
 
