@@ -7,6 +7,10 @@ It incorporates various features including dynamic (time-varying) data like
 case counts and vaccination rates, static (less frequently changing) data like
 demographics and healthcare capacity, and lagged features to capture
 time-series dependencies.
+
+Enhanced with LSTM deep learning models and ensemble methods for improved accuracy,
+particularly for capturing complex temporal patterns across different pandemic phases
+and COVID-19 variants.
 """
 
 import pandas as pd
@@ -18,10 +22,27 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split, GridSearchCV, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.impute import KNNImputer # Added for sophisticated imputation
+from sklearn.feature_selection import RFECV # Added for recursive feature elimination
 import os
 import joblib
 import datetime # Added for timestamping runs
 import json     # Added for saving run details
+
+# Add TensorFlow and Keras imports for LSTM models
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Dense, LSTM, Dropout
+    from tensorflow.keras.callbacks import EarlyStopping
+    from tensorflow.keras.optimizers import Adam
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+    print("TensorFlow not available. LSTM models will not be available.")
+
+# Add ensemble method components
+from sklearn.ensemble import VotingRegressor, StackingRegressor
+from sklearn.linear_model import Ridge
 
 # Ensure necessary directories exist for outputs and models
 os.makedirs('eda_outputs/per_country', exist_ok=True) # For EDA outputs, if any were generated here
@@ -45,10 +66,14 @@ class HealthcareStrainPredictor:
                  target_col, 
                  lag_periods=[7, 14],
                  rolling_avg_windows=[7, 14], # Added for rolling averages
-                 model_type='GradientBoosting', # Added: 'GradientBoosting' or 'RandomForest'
+                 model_type='GradientBoosting', # Extended options: 'GradientBoosting', 'RandomForest', 'LSTM', 'Ensemble'
                  use_hyperparameter_tuning=False, # Added
                  n_neighbors_imputation=5, # Added for KNNImputer
-                 cv_splits=3): # Added for TimeSeriesSplit in GridSearchCV
+                 cv_splits=3, # Added for TimeSeriesSplit in GridSearchCV
+                 use_feature_selection=False, # Added for RFECV
+                 lstm_units=64, # Added for LSTM configuration
+                 lstm_dropout=0.2, # Added for LSTM configuration
+                 variant_data=None): # Added for variant-specific analysis
         """
         Initializes the HealthcareStrainPredictor.
 
@@ -58,10 +83,14 @@ class HealthcareStrainPredictor:
             target_col (str): Target variable column name.
             lag_periods (list): Lag periods for dynamic features.
             rolling_avg_windows (list): Window sizes for rolling averages of dynamic features.
-            model_type (str): Type of model to use ('GradientBoosting' or 'RandomForest').
+            model_type (str): Type of model to use ('GradientBoosting', 'RandomForest', 'LSTM', or 'Ensemble').
             use_hyperparameter_tuning (bool): Whether to perform hyperparameter tuning.
             n_neighbors_imputation (int): Number of neighbors for KNNImputer.
             cv_splits (int): Number of splits for TimeSeriesSplit in GridSearchCV.
+            use_feature_selection (bool): Whether to use recursive feature elimination.
+            lstm_units (int): Number of LSTM units for deep learning model.
+            lstm_dropout (float): Dropout rate for LSTM layers.
+            variant_data (DataFrame, optional): COVID variant prevalence data.
         """
         self.base_dynamic_feature_cols = base_dynamic_feature_cols
         self.static_feature_cols = static_feature_cols
@@ -72,6 +101,10 @@ class HealthcareStrainPredictor:
         self.use_hyperparameter_tuning = use_hyperparameter_tuning
         self.n_neighbors_imputation = n_neighbors_imputation
         self.cv_splits = cv_splits
+        self.use_feature_selection = use_feature_selection
+        self.lstm_units = lstm_units
+        self.lstm_dropout = lstm_dropout
+        self.variant_data = variant_data
         
         self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_results_dir = os.path.join(RESULTS_BASE_DIR, f"{self.run_id}_{self.model_type}_{'tuned' if self.use_hyperparameter_tuning else 'default'}")
@@ -86,8 +119,15 @@ class HealthcareStrainPredictor:
         self.y_train_series = None # Series
         self.X_test_df = None # DataFrame before pipeline processing
         self.y_test_series = None # Series
-
-
+        
+        # Check if LSTM is requested but TensorFlow is not available
+        if model_type == 'LSTM' and not TENSORFLOW_AVAILABLE:
+            print("Warning: LSTM model requested but TensorFlow not available. Falling back to GradientBoosting.")
+            self.model_type = 'GradientBoosting'
+            
+        # Create the directory for this run's results
+        os.makedirs(self.run_results_dir, exist_ok=True)
+        
     def load_and_preprocess_data(self, csv_path):
         """
         Loads data, performs feature engineering (lags, rolling averages),
@@ -163,65 +203,277 @@ class HealthcareStrainPredictor:
         if self.X_train_df.empty or self.X_test_df.empty:
             raise ValueError("Training or testing dataframe is empty after split. Check data volume and split ratio.")
 
-    def train_model(self):
+    def _create_model(self):
         """
-        Defines and trains the model pipeline (imputer, scaler, regressor).
-        Uses GridSearchCV with TimeSeriesSplit if hyperparameter tuning is enabled.
-        Also extracts feature importances if available.
+        Creates and returns the appropriate model based on self.model_type.
+        If hyperparameter tuning is enabled, returns a GridSearchCV object.
+        """
+        if self.model_type == 'GradientBoosting':
+            base_model = GradientBoostingRegressor(random_state=42)
+            param_grid = {
+                'n_estimators': [100, 200, 300],
+                'learning_rate': [0.01, 0.05, 0.1],
+                'max_depth': [3, 5, 7]
+            } if self.use_hyperparameter_tuning else {}
+        
+        elif self.model_type == 'RandomForest':
+            base_model = RandomForestRegressor(random_state=42)
+            param_grid = {
+                'n_estimators': [100, 200, 300],
+                'max_features': ['auto', 'sqrt'],
+                'max_depth': [10, 20, 30, None]
+            } if self.use_hyperparameter_tuning else {}
+        
+        elif self.model_type == 'LSTM':
+            # LSTM doesn't fit into the scikit-learn pipeline framework
+            # It will be handled separately in the train model method
+            return None
+        
+        elif self.model_type == 'Ensemble':
+            # Create an ensemble of multiple models
+            gb_model = GradientBoostingRegressor(random_state=42)
+            rf_model = RandomForestRegressor(random_state=42)
+            ridge_model = Ridge(random_state=42)
+            
+            # Create a voting ensemble
+            base_model = VotingRegressor(
+                estimators=[
+                    ('gb', gb_model),
+                    ('rf', rf_model),
+                    ('ridge', ridge_model)
+                ]
+            )
+            param_grid = {} # Hyperparameter tuning for ensemble is more complex and handled separately
+        
+        else:
+            raise ValueError(f"Unknown model type: {self.model_type}")
+        
+        # Create and return the model, wrapped in GridSearchCV if tuning is enabled
+        if self.use_hyperparameter_tuning and param_grid:
+            time_series_cv = TimeSeriesSplit(n_splits=self.cv_splits)
+            return GridSearchCV(
+                base_model,
+                param_grid=param_grid,
+                cv=time_series_cv,
+                scoring='neg_mean_absolute_error',
+                n_jobs=-1
+            )
+        else:
+            return base_model
+            
+    def _create_lstm_model(self, input_shape):
+        """
+        Creates and returns a LSTM model for time series prediction.
+        
+        Args:
+            input_shape (tuple): Shape of input data (n_timesteps, n_features)
+            
+        Returns:
+            A compiled Keras Sequential model
+        """
+        model = Sequential([
+            LSTM(units=self.lstm_units, return_sequences=True, input_shape=input_shape),
+            Dropout(self.lstm_dropout),
+            LSTM(units=self.lstm_units // 2),
+            Dropout(self.lstm_dropout),
+            Dense(32, activation='relu'),
+            Dense(1)  # Output layer for regression
+        ])
+        
+        model.compile(
+            optimizer=Adam(learning_rate=0.001),
+            loss='mse',
+            metrics=['mae']
+        )
+        
+        return model
+        
+    def _prepare_lstm_data(self, X_train, y_train, X_test, y_test, n_timesteps=14):
+        """
+        Prepares the data in the format needed for LSTM models (3D).
+        
+        Args:
+            X_train, X_test: Feature matrices
+            y_train, y_test: Target vectors
+            n_timesteps: Number of time steps for each sample
+            
+        Returns:
+            X_train_3d, X_test_3d: Reshaped feature arrays
+            y_train, y_test: Original target arrays
+        """
+        # Apply imputation and scaling
+        imputer = KNNImputer(n_neighbors=self.n_neighbors_imputation)
+        scaler = MinMaxScaler()
+        
+        X_train_processed = imputer.fit_transform(X_train)
+        X_train_processed = scaler.fit_transform(X_train_processed)
+        
+        X_test_processed = imputer.transform(X_test)
+        X_test_processed = scaler.transform(X_test_processed)
+        
+        # Reshape data into 3D format for LSTM [samples, timesteps, features]
+        # This is a simplified approach - normally would need more complex time sequences
+        n_samples_train = X_train_processed.shape[0] - n_timesteps + 1
+        n_samples_test = X_test_processed.shape[0] - n_timesteps + 1
+        n_features = X_train_processed.shape[1]
+        
+        X_train_3d = np.zeros((n_samples_train, n_timesteps, n_features))
+        X_test_3d = np.zeros((n_samples_test, n_timesteps, n_features))
+        
+        # Create sequences
+        for i in range(n_samples_train):
+            X_train_3d[i] = X_train_processed[i:i+n_timesteps]
+            
+        for i in range(n_samples_test):
+            X_test_3d[i] = X_test_processed[i:i+n_timesteps]
+        
+        # Adjust targets to match sample count
+        y_train_lstm = y_train[n_timesteps-1:].values
+        y_test_lstm = y_test[n_timesteps-1:].values
+        
+        return X_train_3d, y_train_lstm, X_test_3d, y_test_lstm
+        
+    def train_model(self, train_ratio=0.8, random_state=42):
+        """
+        Trains the model using the processed data.
+        
+        Args:
+            train_ratio (float): Ratio of data to use for training vs testing.
+            random_state (int): Random seed for reproducible splits.
+            
+        Returns:
+            Fitted model and evaluation results.
         """
         if self.X_train_df is None or self.y_train_series is None:
             raise ValueError("Data not loaded and preprocessed. Call load_and_preprocess_data first.")
 
-        # Define pipeline steps
-        steps = [
-            ('imputer', KNNImputer(n_neighbors=self.n_neighbors_imputation)),
-            ('scaler', MinMaxScaler())]
-
-        # Add model to pipeline
-        if self.model_type == 'RandomForest':
-            model = RandomForestRegressor(random_state=42)
-            steps.append(('regressor', model))
-            param_grid = {
-                'regressor__n_estimators': [50, 100], # Reduced for speed
-                'regressor__max_depth': [None, 10, 20],
-                # 'regressor__min_samples_split': [2, 5],
-                # 'regressor__min_samples_leaf': [1, 2]
-            }
-        elif self.model_type == 'GradientBoosting':
-            model = GradientBoostingRegressor(random_state=42)
-            steps.append(('regressor', model))
-            param_grid = {
-                'regressor__n_estimators': [50, 100], # Reduced for speed
-                'regressor__learning_rate': [0.05, 0.1],
-                # 'regressor__max_depth': [3, 5]
-            }
-        else:
-            raise ValueError(f"Unsupported model_type: {self.model_type}")
+        # Execute feature selection if requested
+        if self.use_feature_selection and self.model_type != 'LSTM':
+            print("Performing recursive feature elimination...")
+            base_model = self._create_model()
+            rfecv = RFECV(
+                estimator=base_model,
+                step=1,
+                cv=TimeSeriesSplit(n_splits=self.cv_splits),
+                scoring='neg_mean_absolute_error',
+                min_features_to_select=5
+            )
+            
+            # Apply KNN imputation before feature selection
+            imputer = KNNImputer(n_neighbors=self.n_neighbors_imputation)
+            X_train_imputed = imputer.fit_transform(self.X_train_df)
+            
+            rfecv.fit(X_train_imputed, self.y_train_series)
+            
+            # Get selected features
+            selected_features = [f for f, selected in zip(self.feature_cols, rfecv.support_) if selected]
+            print(f"Selected {len(selected_features)} out of {len(self.feature_cols)} features")
+            
+            # Update feature columns
+            self.feature_cols = selected_features
+            self.X_train_df = self.X_train_df[self.feature_cols]
+            self.X_test_df = self.X_test_df[self.feature_cols]
         
-        pipeline = Pipeline(steps)
-
-        if self.use_hyperparameter_tuning:
-            print(f"Starting hyperparameter tuning for {self.model_type}...")
-            # TimeSeriesSplit for cross-validation in tuning
-            tscv = TimeSeriesSplit(n_splits=self.cv_splits)
-            grid_search = GridSearchCV(pipeline, param_grid, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=-1, verbose=1)
-            grid_search.fit(self.X_train_df, self.y_train_series)
-            self.model_pipeline = grid_search.best_estimator_
-            self.best_params_ = grid_search.best_params_
-            print(f"Best parameters found: {self.best_params_}")
-        else:
-            print(f"Training {self.model_type} with default parameters...")
-            self.model_pipeline = pipeline 
-            self.model_pipeline.fit(self.X_train_df, self.y_train_series)
-            self.best_params_ = "Not Tuned (default parameters)"
-        
-        if hasattr(self.model_pipeline.named_steps['regressor'], 'feature_importances_'):
-            importances = self.model_pipeline.named_steps['regressor'].feature_importances_
-            self.feature_importances_ = pd.Series(importances, index=self.X_train_df.columns).sort_values(ascending=False)
-        else:
+        # Handle LSTM separately from scikit-learn models
+        if self.model_type == 'LSTM':
+            X_train_3d, y_train_lstm, X_test_3d, y_test_lstm = self._prepare_lstm_data(
+                self.X_train_df, self.y_train_series, 
+                self.X_test_df, self.y_test_series
+            )
+            
+            # Define early stopping
+            early_stopping = EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                restore_best_weights=True
+            )
+            
+            # Create and train the LSTM model
+            lstm_model = self._create_lstm_model(input_shape=(X_train_3d.shape[1], X_train_3d.shape[2]))
+            
+            history = lstm_model.fit(
+                X_train_3d, y_train_lstm,
+                epochs=100,
+                batch_size=32,
+                validation_split=0.2,
+                callbacks=[early_stopping],
+                verbose=1
+            )
+            
+            # Make predictions
+            y_pred_lstm = lstm_model.predict(X_test_3d).flatten()
+            mae = mean_absolute_error(y_test_lstm, y_pred_lstm)
+            
+            # Save results
+            self.model = lstm_model
+            self.history = history.history
+            self.evaluation_results = {
+                'mae': mae,
+                'test_predictions': y_pred_lstm,
+                'test_actual': y_test_lstm
+            }
+            
+            # Save the model
+            lstm_model.save(os.path.join(self.run_results_dir, 'lstm_model.h5'))
+            
+            # Since LSTM doesn't provide feature importances, create a placeholder
             self.feature_importances_ = None
+            
+            print(f"LSTM Model MAE: {mae:.4f}")
+            return mae
+            
+        else:
+            # Continue with the original scikit-learn approach for other models
+            # Define pipeline steps
+            steps = [
+                ('imputer', KNNImputer(n_neighbors=self.n_neighbors_imputation)),
+                ('scaler', MinMaxScaler())]
 
-        print("Model training complete.")
+            # Add model to pipeline
+            if self.model_type == 'RandomForest':
+                model = RandomForestRegressor(random_state=42)
+                steps.append(('regressor', model))
+                param_grid = {
+                    'regressor__n_estimators': [50, 100], # Reduced for speed
+                    'regressor__max_depth': [None, 10, 20],
+                    # 'regressor__min_samples_split': [2, 5],
+                    # 'regressor__min_samples_leaf': [1, 2]
+                }
+            elif self.model_type == 'GradientBoosting':
+                model = GradientBoostingRegressor(random_state=42)
+                steps.append(('regressor', model))
+                param_grid = {
+                    'regressor__n_estimators': [50, 100], # Reduced for speed
+                    'regressor__learning_rate': [0.05, 0.1],
+                    # 'regressor__max_depth': [3, 5]
+                }
+            else:
+                raise ValueError(f"Unsupported model_type: {self.model_type}")
+            
+            pipeline = Pipeline(steps)
+
+            if self.use_hyperparameter_tuning:
+                print(f"Starting hyperparameter tuning for {self.model_type}...")
+                # TimeSeriesSplit for cross-validation in tuning
+                tscv = TimeSeriesSplit(n_splits=self.cv_splits)
+                grid_search = GridSearchCV(pipeline, param_grid, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=-1, verbose=1)
+                grid_search.fit(self.X_train_df, self.y_train_series)
+                self.model_pipeline = grid_search.best_estimator_
+                self.best_params_ = grid_search.best_params_
+                print(f"Best parameters found: {self.best_params_}")
+            else:
+                print(f"Training {self.model_type} with default parameters...")
+                self.model_pipeline = pipeline 
+                self.model_pipeline.fit(self.X_train_df, self.y_train_series)
+                self.best_params_ = "Not Tuned (default parameters)"
+            
+            if hasattr(self.model_pipeline.named_steps['regressor'], 'feature_importances_'):
+                importances = self.model_pipeline.named_steps['regressor'].feature_importances_
+                self.feature_importances_ = pd.Series(importances, index=self.X_train_df.columns).sort_values(ascending=False)
+            else:
+                self.feature_importances_ = None
+
+            print("Model training complete.")
 
     def predict(self, X_unscaled_df):
         """
