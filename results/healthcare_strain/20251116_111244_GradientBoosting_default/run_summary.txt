@@ -1,0 +1,38 @@
+Healthcare Strain Prediction Run Summary
+--------------------------------------
+Run ID: 20251116_111244
+Timestamp: 2025-11-16T11:37:06.846628
+Model Type: GradientBoosting
+Target Column: icu_patients_per_million
+Hyperparameter Tuning: Disabled
+Best Parameters: Not Tuned (default parameters)
+Features Used (55 total):
+  Sample Features (first 5): aged_65_older, cardiovasc_death_rate, diabetes_prevalence, extreme_poverty, gdp_per_capita...
+
+Evaluation
+----------
+Mean Absolute Error (MAE) on Test Set: 4.1111
+
+Interpretation of MAE:
+The MAE indicates that, on average, the model's predictions for 'icu_patients_per_million'
+are off by approximately 4.1111 units from the actual values on the test set.
+A lower MAE is generally better. This value should be contextualized against the typical range
+and variability of 'icu_patients_per_million'. For example, if 'icu_patients_per_million' typically ranges from 0-100, an MAE of 4.1111 might be considered good.
+
+Feature Importances (Top 10):
+new_deaths_smoothed_per_million              0.436576
+hosp_patients_per_million                    0.113129
+hosp_patients_per_million_roll_avg7          0.061070
+new_deaths_smoothed_per_million_roll_avg7    0.050203
+stringency_index_roll_avg14                  0.046102
+stringency_index                             0.033689
+stringency_index_roll_avg7                   0.021180
+stringency_index_lag14                       0.020067
+extreme_poverty                              0.017869
+aged_65_older                                0.017541
+
+Predictions:
+Test set predictions and actual values (including date and location) are saved in 'test_predictions_vs_actual.csv'.
+Full run details and configurations are saved in 'run_details.json'.
+The trained model pipeline is saved as 'model_pipeline.pkl'.
+All outputs for this run are in directory: results/healthcare_strain\20251116_111244_GradientBoosting_default

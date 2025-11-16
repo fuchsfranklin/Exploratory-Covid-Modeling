@@ -22,7 +22,7 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit, train_test_sp
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, f1_score, confusion_matrix, balanced_accuracy_score
 
 import os
 import json

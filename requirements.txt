@@ -1,0 +1,39 @@
+# Core Data Science Libraries
+pandas>=1.5.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+scipy>=1.10.0
+
+# Statistical Analysis
+statsmodels>=0.14.0
+
+# Visualization
+matplotlib>=3.6.0
+seaborn>=0.12.0
+plotly>=5.13.0
+
+# Deep Learning (Optional - for LSTM models)
+tensorflow>=2.12.0
+
+# Time Series Analysis
+pywavelets>=1.4.0
+
+# Dashboard
+streamlit>=1.20.0
+
+# NLP and Sentiment Analysis (Optional)
+nltk>=3.8.0
+transformers>=4.26.0
+torch>=2.0.0
+
+# Causal Inference (Optional)
+causalinference>=0.1.3
+linearmodels>=4.27
+
+# Utilities
+joblib>=1.2.0
+tqdm>=4.65.0
+python-dateutil>=2.8.0
+
+# Data Quality
+openpyxl>=3.1.0

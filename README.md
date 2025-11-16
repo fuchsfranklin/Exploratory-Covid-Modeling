@@ -81,10 +81,10 @@ Let’s be honest: by now, COVID-19 prediction models are almost their own pande
 
 The repository includes comprehensive reports for each analysis:
 
-- [Healthcare Strain Analysis Report](healthcare_strain_analysis_report.md)
-- [Pandemic Fatigue Analysis Report](pandemic_fatigue_analysis_report.md)
-- [Policy Effectiveness Lag Analysis Report](policy_effectiveness_lag_analysis_report.md)
-- [Integrated Findings and Recommendations](integrated_findings_report.md)
+- [Healthcare Strain Analysis Report](docs/healthcare_strain_analysis_report.md)
+- [Pandemic Fatigue Analysis Report](docs/pandemic_fatigue_analysis_report.md)
+- [Policy Effectiveness Lag Analysis Report](docs/policy_effectiveness_lag_analysis_report.md)
+- [Integrated Findings and Recommendations](docs/integrated_findings_report.md)
 
 ## Methodologies
 

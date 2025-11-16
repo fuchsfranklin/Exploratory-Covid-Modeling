@@ -140,22 +140,35 @@ if page == "Overview":
         # Display a sample map visualization
         st.subheader("Geographical Distribution of COVID-19 Impact")
         
-        map_metric = st.selectbox("Select Map Metric", 
-                                ["total_cases_per_million", "total_deaths_per_million", 
-                                 "icu_patients_per_million", "stringency_index"])
+        metric_descriptions = {
+            "total_cases_per_million": "Cumulative confirmed cases per million population",
+            "total_deaths_per_million": "Cumulative deaths per million population",
+            "icu_patients_per_million": "Current ICU patients per million population"
+        }
         
-        fig = px.choropleth(
-            latest_data, 
-            locations="iso_code",
-            color=map_metric,
-            hover_name="location",
-            color_continuous_scale="Viridis",
-            title=f"{map_metric.replace('_', ' ').title()} by Country"
-        )
-        fig.update_layout(height=600)
-        st.plotly_chart(fig, use_container_width=True)
+        map_metric = st.selectbox("Select Map Metric", 
+                                list(metric_descriptions.keys()))
+        
+        st.caption(metric_descriptions[map_metric])
+        
+        # Filter out rows with missing data for the selected metric
+        map_data = latest_data[latest_data[map_metric].notna()].copy()
+        
+        if len(map_data) > 0:
+            fig = px.choropleth(
+                map_data, 
+                locations="iso_code",
+                color=map_metric,
+                hover_name="location",
+                color_continuous_scale="Viridis",
+                title=f"{map_metric.replace('_', ' ').title()} by Country"
+            )
+            fig.update_layout(height=600)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning(f"No data available for {map_metric}")
     else:
-        st.error("Could not load data. Please check the data file path.")
+        st.error("Could not load data.")
 
 # Healthcare Strain page
 elif page == "Healthcare Strain":
@@ -175,9 +188,22 @@ elif page == "Healthcare Strain":
     """)
     
     if df is not None:
-        # Country selection
-        countries = sorted(df['location'].unique())
-        selected_country = st.selectbox("Select a country to analyze:", countries)
+        # Filter countries with sufficient healthcare data
+        countries_with_data = []
+        for country in df['location'].unique():
+            country_df = df[df['location'] == country]
+            has_icu = country_df['icu_patients_per_million'].notna().sum() > 10
+            has_hospital = country_df['hosp_patients_per_million'].notna().sum() > 10
+            if has_icu or has_hospital:
+                countries_with_data.append(country)
+        
+        countries_with_data = sorted(countries_with_data)
+        
+        if len(countries_with_data) == 0:
+            st.error("No countries with sufficient healthcare strain data.")
+        else:
+            st.info(f"Showing {len(countries_with_data)} countries with ICU or hospital utilization data.")
+            selected_country = st.selectbox("Select a country to analyze:", countries_with_data)
         
         # Filter data for selected country
         country_data = df[df['location'] == selected_country].copy()
@@ -186,8 +212,13 @@ elif page == "Healthcare Strain":
         has_icu_data = 'icu_patients_per_million' in country_data.columns and country_data['icu_patients_per_million'].notna().sum() > 10
         
         if has_icu_data:
-            # Plot ICU utilization
             st.subheader("ICU Utilization vs. Key Predictors")
+            st.markdown("""
+            **What this shows:** ICU patients per million (purple) compared to deaths (red, scaled ×5) and policy stringency (green).
+            Deaths are the strongest predictor of ICU demand.
+            
+            **How to interact:** Hover over lines to see exact values. Zoom by clicking and dragging. Double-click to reset.
+            """)
             
             # Create a composite plot with ICU and key predictors
             fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -227,8 +258,12 @@ elif page == "Healthcare Strain":
             
             st.plotly_chart(fig, use_container_width=True)
             
-            # Display feature importance
             st.subheader("Feature Importance in ICU Prediction Model")
+            st.markdown("""
+            **What this shows:** Relative importance of each feature in predicting ICU utilization. Higher percentages indicate stronger predictive power.
+            
+            **How to interact:** Hover over bars to see exact importance values. Features are ranked from most to least important.
+            """)
             
             # Sample feature importance data (in a real app, this would come from the trained model)
             feature_importance = {
@@ -266,8 +301,13 @@ elif page == "Healthcare Strain":
             fig.update_layout(height=600)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Model comparison section
             st.subheader("Model Performance Comparison")
+            st.markdown("""
+            **What this shows:** Performance comparison across 4 ML models. All metrics normalized so larger area = better performance.
+            MAE/RMSE are inverted (lower is better). Ensemble combines multiple models for best results.
+            
+            **How to interact:** Hover to see exact values. Click model names in the legend to show/hide models for easier comparison.
+            """)
             
             model_performance = {
                 'Model': ['Gradient Boosting', 'Random Forest', 'LSTM', 'Ensemble'],
@@ -311,17 +351,53 @@ elif page == "Healthcare Strain":
             st.plotly_chart(fig, use_container_width=True)
             
         else:
-            st.warning(f"Not enough ICU data available for {selected_country}.")
+            st.warning(f"Not enough ICU data available for {selected_country}. Showing hospital utilization instead.")
             
             # Show hospital patients instead if available
-            if 'hospital_patients_per_million' in country_data.columns and country_data['hospital_patients_per_million'].notna().sum() > 10:
+            if 'hosp_patients_per_million' in country_data.columns and country_data['hosp_patients_per_million'].notna().sum() > 10:
                 st.subheader("Hospital Utilization vs. Key Predictors")
-                # Similar visualization code but for hospital patients instead of ICU
-                # ...
-            else:
-                st.error(f"Insufficient hospital strain data for {selected_country}.")
+                st.markdown("""
+                **What this shows:** Hospital patients per million (purple) compared to deaths (red, scaled ×5) and policy stringency (green).
+                Similar patterns to ICU data but includes all hospitalized COVID patients.
+                
+                **How to interact:** Hover over lines to see exact values. Zoom by clicking and dragging. Double-click to reset.
+                """)
+                
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                fig.add_trace(
+                    go.Scatter(x=country_data['date'], y=country_data['hosp_patients_per_million'], 
+                              name='Hospital Patients per Million', line=dict(color='#AB63FA', width=2)),
+                    secondary_y=False
+                )
+                
+                if 'new_deaths_smoothed_per_million' in country_data.columns:
+                    fig.add_trace(
+                        go.Scatter(x=country_data['date'], y=country_data['new_deaths_smoothed_per_million']*5,
+                                  name='New Deaths per Million (×5)', line=dict(color='#EF553B')),
+                        secondary_y=False
+                    )
+                
+                if 'stringency_index' in country_data.columns:
+                    fig.add_trace(
+                        go.Scatter(x=country_data['date'], y=country_data['stringency_index'],
+                                  name='Stringency Index', line=dict(color='#00CC96')),
+                        secondary_y=True
+                    )
+                
+                fig.update_layout(
+                    title=f'Hospital Utilization and Key Predictors in {selected_country}',
+                    xaxis_title='Date',
+                    height=500,
+                    hovermode="x unified",
+                    legend=dict(orientation="h", y=1.02)
+                )
+                fig.update_yaxes(title_text="Patients per Million", secondary_y=False)
+                fig.update_yaxes(title_text="Stringency Index", secondary_y=True)
+                
+                st.plotly_chart(fig, use_container_width=True)
     else:
-        st.error("Could not load data. Please check the data file path.")
+        st.error("Could not load data.")
 
 # Pandemic Fatigue page
 elif page == "Pandemic Fatigue":
@@ -330,19 +406,109 @@ elif page == "Pandemic Fatigue":
     st.markdown("""
     ## Data-Driven Pandemic Fatigue Detection
     
-    This analysis implements a novel approach to detecting "pandemic fatigue" - periods when public
-    compliance with restrictions decreases despite high levels of stringency. Key innovations include:
+    **Pandemic Fatigue** occurs when cases rise despite high restrictions, suggesting reduced public compliance.
     
-    - Operational definition of fatigue using epidemiological data
-    - Integration of social media sentiment analysis
-    - Incorporation of mobility data to track behavioral changes
-    - Machine learning classification of fatigue periods
-    
-    Explore the visualizations below to understand fatigue patterns across countries and time periods.
+    **Key Definitions:**
+    - **Stringency Index** (0-100): Government response measure combining closures, travel bans, and restrictions
+    - **Fatigue Period**: Days with stringency ≥60 AND cases increasing >20% over 14 days
+    - **Implication**: High fatigue indicates policies losing effectiveness, requiring strategy adjustment
     """)
     
-    # Rest of the pandemic fatigue page code
-    # ...
+    if df is not None:
+        # Filter countries with sufficient data
+        countries_with_data = []
+        for country in df['location'].unique():
+            country_df = df[df['location'] == country]
+            has_stringency = country_df['stringency_index'].notna().sum() > 100
+            has_cases = country_df['new_cases_smoothed_per_million'].notna().sum() > 100
+            if has_stringency and has_cases:
+                countries_with_data.append(country)
+        
+        countries_with_data = sorted(countries_with_data)
+        
+        if len(countries_with_data) == 0:
+            st.error("No countries with sufficient data for fatigue analysis.")
+        else:
+            st.info(f"Showing {len(countries_with_data)} countries with complete stringency and case data.")
+            selected_country = st.selectbox("Select a country:", countries_with_data, key='fatigue_country')
+        
+        country_data = df[df['location'] == selected_country].copy()
+        country_data = country_data.sort_values('date')
+        
+        # Define fatigue indicator
+        if 'stringency_index' in country_data.columns and 'new_cases_smoothed_per_million' in country_data.columns:
+            country_data['case_14d_avg'] = country_data['new_cases_smoothed_per_million'].rolling(14, min_periods=7).mean()
+            country_data['case_change'] = country_data['case_14d_avg'].pct_change(periods=14)
+            country_data['high_stringency'] = country_data['stringency_index'] >= 60
+            country_data['rising_cases'] = country_data['case_change'] > 0.2
+            country_data['fatigue_indicator'] = country_data['high_stringency'] & country_data['rising_cases']
+            
+            st.subheader("Stringency vs. Case Trends")
+            
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            fig.add_trace(
+                go.Scatter(x=country_data['date'], y=country_data['stringency_index'],
+                          name='Stringency Index', line=dict(color='#636EFA')),
+                secondary_y=False
+            )
+            
+            fig.add_trace(
+                go.Scatter(x=country_data['date'], y=country_data['new_cases_smoothed_per_million'],
+                          name='Cases per Million', line=dict(color='#EF553B')),
+                secondary_y=True
+            )
+            
+            fatigue_periods = country_data[country_data['fatigue_indicator'] == True]
+            if len(fatigue_periods) > 0:
+                fig.add_trace(
+                    go.Scatter(x=fatigue_periods['date'], y=fatigue_periods['stringency_index'],
+                              mode='markers', name='Fatigue Periods',
+                              marker=dict(color='red', size=8, symbol='x')),
+                    secondary_y=False
+                )
+            
+            fig.update_layout(
+                title=f'Pandemic Fatigue Detection in {selected_country}',
+                xaxis_title='Date',
+                height=500,
+                hovermode="x unified"
+            )
+            fig.update_yaxes(title_text="Stringency Index", secondary_y=False)
+            fig.update_yaxes(title_text="Cases per Million", secondary_y=True)
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            fatigue_pct = (country_data['fatigue_indicator'].sum() / len(country_data)) * 100
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Fatigue Days", f"{country_data['fatigue_indicator'].sum()}")
+            col2.metric("% of Pandemic", f"{fatigue_pct:.1f}%")
+            col3.metric("Avg Stringency", f"{country_data['stringency_index'].mean():.1f}")
+            
+            st.subheader("Fatigue Indicator Over Time")
+            st.caption("Binary indicator showing when fatigue conditions are met (1) or not (0). Shaded areas represent periods of pandemic fatigue.")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=country_data['date'],
+                y=country_data['fatigue_indicator'].astype(int),
+                fill='tozeroy',
+                name='Fatigue Periods',
+                line=dict(color='#FF6B6B')
+            ))
+            
+            fig.update_layout(
+                title='Pandemic Fatigue Timeline',
+                xaxis_title='Date',
+                yaxis_title='Fatigue Indicator (0=No, 1=Yes)',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning(f"Insufficient data for fatigue analysis in {selected_country}")
+    else:
+        st.error("Could not load data.")
 
 # Policy Effectiveness page
 elif page == "Policy Effectiveness":
@@ -351,19 +517,110 @@ elif page == "Policy Effectiveness":
     st.markdown("""
     ## Policy Impact and Implementation Lag
     
-    This analysis examines the temporal relationship between policy interventions and epidemiological outcomes.
-    Key features include:
+    **Policy Lag**: Time between implementing restrictions and observing effects on transmission.
     
-    - Multiple time-series methods to identify lag structures
-    - Causal inference techniques for selected high-quality data regions
-    - Decomposition of policy effects by intervention type
-    - Wavelet coherence to capture time-varying relationships
-    
-    Use the tools below to explore policy effectiveness across different regions and interventions.
+    **Key Concepts:**
+    - **Stringency Index**: Composite measure of government response (0-100)
+    - **Reproduction Rate (R)**: Average number of people infected by one case (R<1 means declining spread)
+    - **Expected Lag**: Typically 7-21 days due to incubation period and reporting delays
     """)
     
-    # Rest of the policy effectiveness page code
-    # ...
+    if df is not None:
+        # Filter countries with sufficient data
+        countries_with_data = []
+        for country in df['location'].unique():
+            country_df = df[df['location'] == country]
+            has_stringency = country_df['stringency_index'].notna().sum() > 100
+            has_reproduction = country_df['reproduction_rate'].notna().sum() > 100
+            if has_stringency and has_reproduction:
+                countries_with_data.append(country)
+        
+        countries_with_data = sorted(countries_with_data)
+        
+        if len(countries_with_data) == 0:
+            st.error("No countries with sufficient data for policy analysis.")
+        else:
+            st.info(f"Showing {len(countries_with_data)} countries with complete policy and outcome data.")
+            selected_country = st.selectbox("Select a country:", countries_with_data, key='policy_country')
+            
+            country_data = df[df['location'] == selected_country].copy()
+            country_data = country_data.sort_values('date')
+            
+            st.subheader("Policy Stringency vs. Reproduction Rate")
+            st.caption("Observe the relationship between policy changes and transmission. Effective policies show R decreasing after stringency increases.")
+            
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            fig.add_trace(
+                go.Scatter(x=country_data['date'], y=country_data['stringency_index'],
+                          name='Stringency Index', line=dict(color='#636EFA', width=2)),
+                secondary_y=False
+            )
+            
+            fig.add_trace(
+                go.Scatter(x=country_data['date'], y=country_data['reproduction_rate'],
+                          name='Reproduction Rate (R)', line=dict(color='#EF553B', width=2)),
+                secondary_y=True
+            )
+            
+            fig.add_hline(y=1, line_dash="dash", line_color="gray", 
+                         annotation_text="R=1 (threshold)", secondary_y=True)
+            
+            fig.update_layout(
+                title=f'Policy Stringency and Transmission in {selected_country}',
+                xaxis_title='Date',
+                height=500,
+                hovermode="x unified"
+            )
+            fig.update_yaxes(title_text="Stringency Index", secondary_y=False)
+            fig.update_yaxes(title_text="Reproduction Rate (R)", secondary_y=True)
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Calculate correlation with lags
+            st.subheader("Policy Lag Analysis")
+            st.caption("Correlation between stringency and reproduction rate at different time lags. Peak negative correlation indicates optimal policy lag.")
+            
+            valid_data = country_data[['stringency_index', 'reproduction_rate']].dropna()
+            
+            if len(valid_data) > 30:
+                lags = range(0, 31)
+                correlations = []
+                
+                for lag in lags:
+                    if lag == 0:
+                        corr = valid_data['stringency_index'].corr(valid_data['reproduction_rate'])
+                    else:
+                        corr = valid_data['stringency_index'].iloc[:-lag].corr(valid_data['reproduction_rate'].iloc[lag:])
+                    correlations.append(corr)
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=list(lags),
+                    y=correlations,
+                    marker_color=['#EF553B' if c < 0 else '#636EFA' for c in correlations],
+                    name='Correlation'
+                ))
+                
+                best_lag = lags[correlations.index(min(correlations))]
+                
+                fig.update_layout(
+                    title=f'Cross-Correlation: Stringency vs Reproduction Rate',
+                    xaxis_title='Lag (days)',
+                    yaxis_title='Correlation',
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Optimal Lag", f"{best_lag} days")
+                col2.metric("Peak Correlation", f"{min(correlations):.3f}")
+                col3.metric("Avg Stringency", f"{country_data['stringency_index'].mean():.1f}")
+                
+                st.info(f"💡 In {selected_country}, policy changes show strongest effect on transmission after ~{best_lag} days.")
+            else:
+                st.warning("Insufficient overlapping data for lag analysis.")
 
 # Cross-Country Comparison page
 elif page == "Cross-Country Comparison":
@@ -372,12 +629,77 @@ elif page == "Cross-Country Comparison":
     st.markdown("""
     ## Comparative Pandemic Analysis
     
-    This tool allows you to compare COVID-19 metrics across multiple countries and explore
-    differences in pandemic trajectories, healthcare strain, and policy responses.
+    Compare COVID-19 metrics across multiple countries to identify patterns and policy effectiveness.
     """)
     
-    # Rest of the cross-country comparison page code
-    # ...
+    if df is not None:
+        all_countries = sorted(df['location'].unique())
+        
+        selected_countries = st.multiselect(
+            "Select countries to compare (2-5 recommended):",
+            all_countries,
+            default=['United States', 'United Kingdom', 'Germany'] if all(c in all_countries for c in ['United States', 'United Kingdom', 'Germany']) else all_countries[:3]
+        )
+        
+        if len(selected_countries) == 0:
+            st.warning("Please select at least one country.")
+        else:
+            metric = st.selectbox(
+                "Select metric to compare:",
+                ['new_cases_smoothed_per_million', 'new_deaths_smoothed_per_million', 
+                 'stringency_index', 'reproduction_rate', 'icu_patients_per_million']
+            )
+            
+            metric_labels = {
+                'new_cases_smoothed_per_million': 'Cases per Million (7-day avg)',
+                'new_deaths_smoothed_per_million': 'Deaths per Million (7-day avg)',
+                'stringency_index': 'Stringency Index',
+                'reproduction_rate': 'Reproduction Rate (R)',
+                'icu_patients_per_million': 'ICU Patients per Million'
+            }
+            
+            st.subheader(f"Comparison: {metric_labels[metric]}")
+            
+            fig = go.Figure()
+            
+            for country in selected_countries:
+                country_data = df[df['location'] == country].copy()
+                country_data = country_data.sort_values('date')
+                
+                fig.add_trace(go.Scatter(
+                    x=country_data['date'],
+                    y=country_data[metric],
+                    name=country,
+                    mode='lines'
+                ))
+            
+            fig.update_layout(
+                title=f'{metric_labels[metric]} - Multi-Country Comparison',
+                xaxis_title='Date',
+                yaxis_title=metric_labels[metric],
+                height=600,
+                hovermode='x unified'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Summary statistics
+            st.subheader("Summary Statistics")
+            
+            summary_data = []
+            for country in selected_countries:
+                country_df = df[df['location'] == country]
+                summary_data.append({
+                    'Country': country,
+                    'Mean': country_df[metric].mean(),
+                    'Max': country_df[metric].max(),
+                    'Latest': country_df[metric].iloc[-1] if len(country_df) > 0 else None
+                })
+            
+            summary_df = pd.DataFrame(summary_data)
+            st.dataframe(summary_df.style.format({'Mean': '{:.2f}', 'Max': '{:.2f}', 'Latest': '{:.2f}'}), use_container_width=True)
+    else:
+        st.error("Could not load data.")
 
 # About page
 elif page == "About":
