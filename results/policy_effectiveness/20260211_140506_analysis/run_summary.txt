@@ -1,0 +1,56 @@
+Policy Effectiveness Lag Analysis — Run Summary
+==================================================
+Run ID: 20260211_140506
+Countries analyzed: 10
+Methods: Cross-correlation, Granger causality, Wavelet coherence
+Max lag tested: 30 days
+Significance level: 0.05
+
+
+--- stringency_index_vs_new_cases_smoothed_per_million ---
+Countries with significant results: 10/10
+Median lag: 3.0 days
+Mean lag: 9.4 days (std: 12.9)
+Range: 0.0 - 38.8 days
+  United States: lag=0.0 days (1 methods significant)
+  United Kingdom: lag=0.0 days (1 methods significant)
+  Germany: lag=38.8 days (1 methods significant)
+  France: lag=0.0 days (1 methods significant)
+  Italy: lag=0.0 days (1 methods significant)
+  Spain: lag=27.1 days (1 methods significant)
+  Canada: lag=6.0 days (3 methods significant)
+  Brazil: lag=7.5 days (2 methods significant)
+  India: lag=0.0 days (1 methods significant)
+  Sweden: lag=14.6 days (2 methods significant)
+
+--- stringency_index_vs_new_deaths_smoothed_per_million ---
+Countries with significant results: 10/10
+Median lag: 13.2 days
+Mean lag: 14.0 days (std: 10.5)
+Range: 0.0 - 31.4 days
+  United States: lag=31.4 days (1 methods significant)
+  United Kingdom: lag=7.5 days (2 methods significant)
+  Germany: lag=6.5 days (2 methods significant)
+  France: lag=13.0 days (3 methods significant)
+  Italy: lag=22.2 days (1 methods significant)
+  Spain: lag=16.6 days (3 methods significant)
+  Canada: lag=29.5 days (1 methods significant)
+  Brazil: lag=0.0 days (1 methods significant)
+  India: lag=0.0 days (1 methods significant)
+  Sweden: lag=13.3 days (2 methods significant)
+
+--- stringency_index_vs_reproduction_rate ---
+Countries with significant results: 10/10
+Median lag: 11.5 days
+Mean lag: 10.3 days (std: 4.7)
+Range: 2.0 - 16.0 days
+  United States: lag=9.0 days (3 methods significant)
+  United Kingdom: lag=7.0 days (3 methods significant)
+  Germany: lag=16.0 days (3 methods significant)
+  France: lag=15.0 days (3 methods significant)
+  Italy: lag=11.0 days (3 methods significant)
+  Spain: lag=2.0 days (3 methods significant)
+  Canada: lag=14.0 days (3 methods significant)
+  Brazil: lag=3.0 days (3 methods significant)
+  India: lag=12.0 days (3 methods significant)
+  Sweden: lag=14.0 days (2 methods significant)

@@ -1,0 +1,28 @@
+Pandemic Fatigue Prediction — Run Summary
+==================================================
+Run ID: 20260211_140752
+Model: LogisticRegression
+Tuned: True
+Best params: {'model__C': 1, 'model__solver': 'lbfgs'}
+
+Fatigue Definition:
+  Stringency threshold: >= 60
+  Case increase threshold: > 20% over 14 days
+
+Evaluation:
+  Balanced accuracy: 0.9080
+  ROC AUC: 0.9692049794581581
+  F1 (fatigue class): 0.5989
+  Accuracy: 0.8842
+
+Top 10 Features:
+  reproduction_rate_smoothed_x_stringency: 8.0771
+  stringency_index_smoothed: -5.2046
+  reproduction_rate_smoothed: -5.1327
+  new_cases_smoothed_per_million_smoothed: -3.1215
+  people_vaccinated_per_hundred_smoothed: -3.0194
+  people_vaccinated_per_hundred_smoothed_x_stringency: 2.2349
+  new_cases_smoothed_per_million_smoothed_x_stringency: 2.2321
+  positive_rate_smoothed: -1.5718
+  new_tests_smoothed_per_thousand_smoothed: -1.4790
+  positive_rate_smoothed_x_stringency: 1.3646

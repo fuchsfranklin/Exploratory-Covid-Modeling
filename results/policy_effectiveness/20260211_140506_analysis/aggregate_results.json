@@ -1,0 +1,206 @@
+{
+  "countries_analyzed": [
+    "United States",
+    "United Kingdom",
+    "Germany",
+    "France",
+    "Italy",
+    "Spain",
+    "Canada",
+    "Brazil",
+    "India",
+    "Sweden"
+  ],
+  "analysis_timestamp": "20260211_140506",
+  "pair_summaries": {
+    "stringency_index_vs_new_cases_smoothed_per_million": {
+      "countries_with_significant_results": [
+        "United States",
+        "United Kingdom",
+        "Germany",
+        "France",
+        "Italy",
+        "Spain",
+        "Canada",
+        "Brazil",
+        "India",
+        "Sweden"
+      ],
+      "n_significant": 10,
+      "n_total": 10,
+      "country_details": {
+        "United States": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "United Kingdom": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "Germany": {
+          "consensus_lag": 38.8,
+          "methods_significant": 1
+        },
+        "France": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "Italy": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "Spain": {
+          "consensus_lag": 27.1,
+          "methods_significant": 1
+        },
+        "Canada": {
+          "consensus_lag": 6.0,
+          "methods_significant": 3
+        },
+        "Brazil": {
+          "consensus_lag": 7.5,
+          "methods_significant": 2
+        },
+        "India": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "Sweden": {
+          "consensus_lag": 14.6,
+          "methods_significant": 2
+        }
+      },
+      "median_lag_days": 3.0,
+      "mean_lag_days": 9.4,
+      "std_lag_days": 12.9,
+      "min_lag_days": 0.0,
+      "max_lag_days": 38.8
+    },
+    "stringency_index_vs_new_deaths_smoothed_per_million": {
+      "countries_with_significant_results": [
+        "United States",
+        "United Kingdom",
+        "Germany",
+        "France",
+        "Italy",
+        "Spain",
+        "Canada",
+        "Brazil",
+        "India",
+        "Sweden"
+      ],
+      "n_significant": 10,
+      "n_total": 10,
+      "country_details": {
+        "United States": {
+          "consensus_lag": 31.4,
+          "methods_significant": 1
+        },
+        "United Kingdom": {
+          "consensus_lag": 7.5,
+          "methods_significant": 2
+        },
+        "Germany": {
+          "consensus_lag": 6.5,
+          "methods_significant": 2
+        },
+        "France": {
+          "consensus_lag": 13.0,
+          "methods_significant": 3
+        },
+        "Italy": {
+          "consensus_lag": 22.2,
+          "methods_significant": 1
+        },
+        "Spain": {
+          "consensus_lag": 16.6,
+          "methods_significant": 3
+        },
+        "Canada": {
+          "consensus_lag": 29.5,
+          "methods_significant": 1
+        },
+        "Brazil": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "India": {
+          "consensus_lag": 0.0,
+          "methods_significant": 1
+        },
+        "Sweden": {
+          "consensus_lag": 13.3,
+          "methods_significant": 2
+        }
+      },
+      "median_lag_days": 13.2,
+      "mean_lag_days": 14.0,
+      "std_lag_days": 10.5,
+      "min_lag_days": 0.0,
+      "max_lag_days": 31.4
+    },
+    "stringency_index_vs_reproduction_rate": {
+      "countries_with_significant_results": [
+        "United States",
+        "United Kingdom",
+        "Germany",
+        "France",
+        "Italy",
+        "Spain",
+        "Canada",
+        "Brazil",
+        "India",
+        "Sweden"
+      ],
+      "n_significant": 10,
+      "n_total": 10,
+      "country_details": {
+        "United States": {
+          "consensus_lag": 9.0,
+          "methods_significant": 3
+        },
+        "United Kingdom": {
+          "consensus_lag": 7.0,
+          "methods_significant": 3
+        },
+        "Germany": {
+          "consensus_lag": 16.0,
+          "methods_significant": 3
+        },
+        "France": {
+          "consensus_lag": 15.0,
+          "methods_significant": 3
+        },
+        "Italy": {
+          "consensus_lag": 11.0,
+          "methods_significant": 3
+        },
+        "Spain": {
+          "consensus_lag": 2.0,
+          "methods_significant": 3
+        },
+        "Canada": {
+          "consensus_lag": 14.0,
+          "methods_significant": 3
+        },
+        "Brazil": {
+          "consensus_lag": 3.0,
+          "methods_significant": 3
+        },
+        "India": {
+          "consensus_lag": 12.0,
+          "methods_significant": 3
+        },
+        "Sweden": {
+          "consensus_lag": 14.0,
+          "methods_significant": 2
+        }
+      },
+      "median_lag_days": 11.5,
+      "mean_lag_days": 10.3,
+      "std_lag_days": 4.7,
+      "min_lag_days": 2.0,
+      "max_lag_days": 16.0
+    }
+  }
+}

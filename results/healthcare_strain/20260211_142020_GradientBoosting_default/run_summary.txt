@@ -1,0 +1,28 @@
+Healthcare Strain Prediction — Run Summary
+==================================================
+Run ID: 20260211_142020
+Model: GradientBoosting
+Target: icu_patients_per_million
+Tuned: False
+Best params: default
+Features: 46
+Train: 31274 rows, Test: 7819 rows
+
+Evaluation:
+  MAE:  5.5460 (avg error in ICU patients per million)
+  RMSE: 8.4342
+
+NOTE: Only lagged features are used as predictors (no contemporaneous
+dynamic values) to enable genuine forward-looking prediction.
+
+Top 10 Features:
+  new_deaths_smoothed_per_million_lag7: 0.4473 (44.7%)
+  hosp_patients_per_million_lag7: 0.2013 (20.1%)
+  stringency_index_lag7: 0.1061 (10.6%)
+  new_cases_smoothed_per_million_lag7: 0.0233 (2.3%)
+  total_boosters_per_hundred_roll_avg14_lag7: 0.0224 (2.2%)
+  extreme_poverty: 0.0184 (1.8%)
+  stringency_index_roll_avg14_lag7: 0.0172 (1.7%)
+  diabetes_prevalence: 0.0164 (1.6%)
+  hosp_patients_per_million_roll_avg14_lag7: 0.0155 (1.5%)
+  human_development_index: 0.0148 (1.5%)

@@ -1,517 +1,457 @@
 """
 Pandemic Fatigue Analysis and Prediction
 
-This module aims to identify, analyze, and potentially forecast periods of "pandemic fatigue."
-Pandemic fatigue is operationally defined based on indicators such as high stringency 
-coinciding with high or unexpectedly increasing disease transmission proxies 
-(e.g., positive rate, cases per test).
+Identifies and classifies periods of "pandemic fatigue" — defined as periods
+where cases rise despite sustained high-stringency policy measures, suggesting
+reduced public compliance with restrictions.
 
-Enhanced with social media sentiment analysis and mobility data integration for improved 
-detection of pandemic fatigue across different regions and cultural contexts.
+Operationalization:
+- High stringency: stringency_index above a configurable threshold (default >= 60)
+- Rising transmission: new_cases_smoothed_per_million increasing over a lookback window
 
-The script preprocesses data, engineers features, trains various classification models,
-and saves results in a structured manner.
+The script preprocesses OWID data, engineers features, trains a classification model,
+and saves structured results.
 """
 
 import pandas as pd
 import numpy as np
-# import matplotlib.pyplot as plt # Plotting will be handled separately or in EDA notebooks
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from sklearn.impute import KNNImputer, SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import KNNImputer
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, f1_score, confusion_matrix, balanced_accuracy_score
-
+from sklearn.metrics import (accuracy_score, classification_report, roc_auc_score,
+                             f1_score, balanced_accuracy_score)
 import os
 import json
 import joblib
 from datetime import datetime
 
-# Try importing optional packages for sentiment analysis
-try:
-    import nltk
-    from nltk.sentiment import SentimentIntensityAnalyzer
-    from nltk.tokenize import word_tokenize
-    NLTK_AVAILABLE = True
-except ImportError:
-    NLTK_AVAILABLE = False
-    print("NLTK not available. Sentiment analysis features will be limited.")
-
-# Try importing transformers for advanced sentiment analysis
-try:
-    from transformers import pipeline
-    import torch
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    print("Transformers library not available. Advanced sentiment analysis will not be available.")
-
-# Base directory for results
 RESULTS_BASE_DIR = "results/pandemic_fatigue"
 os.makedirs(RESULTS_BASE_DIR, exist_ok=True)
 
 
 class PandemicFatiguePredictor:
     """
-    Identifies, analyzes, and potentially forecasts pandemic fatigue using
-    both epidemiological data and social media sentiment analysis.
+    Identifies and predicts pandemic fatigue periods using epidemiological
+    and policy data from the OWID COVID-19 dataset.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  data_path='owid-covid-data.csv',
-                 target_variable_name="fatigue_indicator",
-                 model_type='LogisticRegression', 
+                 model_type='LogisticRegression',
                  tune_hyperparameters=False,
-                 hyperparameter_grid=None,
-                 fatigue_def_params=None, # Added
+                 fatigue_params=None,
                  country_col='location',
                  date_col='date',
-                 sentiment_data_path=None,
-                 mobility_data_path=None,
-                 use_sentiment_analysis=False,
-                 use_mobility_data=False,
-                 sentiment_model='vader',  # 'vader' or 'transformers'
-                 results_base_dir=RESULTS_BASE_DIR,
                  run_id=None):
         """
-        Initialize the PandemicFatiguePredictor with enhanced features.
-
-        Parameters:
-        -----------
-        data_path : str
-            Path to the CSV file containing the OWID dataset.
-        target_variable_name : str
-            Name of the engineered target variable representing fatigue.
-        model_type : str
-            Type of model to use (e.g., 'LogisticRegression', 'GradientBoosting', 'RandomForest').
-        tune_hyperparameters : bool
-            Whether to perform hyperparameter tuning.
-        hyperparameter_grid : dict, optional
-            Grid of hyperparameters for tuning.
-        fatigue_def_params : dict, optional
-            Parameters for defining the fatigue metric.
-        country_col : str
-            Name of the column identifying countries/locations.
-        date_col : str
-            Name of the column for dates.
-        sentiment_data_path : str, optional
-            Path to CSV file containing sentiment data from social media.
-        mobility_data_path : str, optional
-            Path to CSV file containing mobility data.
-        use_sentiment_analysis : bool
-            Whether to incorporate sentiment analysis features.
-        use_mobility_data : bool
-            Whether to incorporate mobility data features.
-        sentiment_model : str
-            Which sentiment analysis model to use ('vader' or 'transformers').
-        results_base_dir : str
-            Base directory to save run results.
-        run_id : str, optional
-            A unique identifier for the run. If None, generated automatically.
+        Args:
+            data_path: Path to the OWID CSV.
+            model_type: 'LogisticRegression', 'GradientBoosting', or 'RandomForest'.
+            tune_hyperparameters: Whether to run GridSearchCV.
+            fatigue_params: Dict overriding default fatigue definition thresholds.
+            country_col: Column name for country/location.
+            date_col: Column name for date.
+            run_id: Unique run identifier. Auto-generated if None.
         """
         self.data_path = data_path
-        self.target_variable_name = target_variable_name
         self.model_type = model_type
         self.tune_hyperparameters = tune_hyperparameters
-        self.hyperparameter_grid = hyperparameter_grid
         self.country_col = country_col
         self.date_col = date_col
-        self.results_base_dir = results_base_dir
-        
-        # New parameters for enhanced features
-        self.sentiment_data_path = sentiment_data_path
-        self.mobility_data_path = mobility_data_path
-        self.use_sentiment_analysis = use_sentiment_analysis
-        self.use_mobility_data = use_mobility_data
-        self.sentiment_model = sentiment_model
-        
-        # Check if sentiment analysis is requested but NLTK is not available
-        if use_sentiment_analysis and not NLTK_AVAILABLE:
-            print("Warning: Sentiment analysis requested but NLTK not available. Disabling sentiment analysis.")
-            self.use_sentiment_analysis = False
-            
-        # Check if advanced transformers sentiment analysis is requested but not available
-        if use_sentiment_analysis and sentiment_model == 'transformers' and not TRANSFORMERS_AVAILABLE:
-            print("Warning: Transformers sentiment analysis requested but library not available. Falling back to VADER.")
-            self.sentiment_model = 'vader'
 
-        default_fatigue_params = {
-            'stringency_col_raw': 'stringency_index', # Raw column name
-            'proxy_col_raw_options': ['positive_rate', 'new_cases_smoothed_per_million'], # Raw column names
-            'stringency_percentile_threshold': 0.65,  # Reduced from 0.75
-            'min_sustained_high_stringency_days': 14, # Reduced from 28
-            'proxy_lookback_window': 10,             # Reduced from 14
-            'proxy_increase_threshold_factor': 1.05   # Reduced from 1.10
+        # Fatigue definition parameters
+        default_params = {
+            'stringency_threshold': 60,
+            'case_lookback_window': 14,
+            'case_increase_threshold': 0.20,  # 20% increase
+            'min_sustained_days': 14,
         }
-        self.fatigue_def_params = default_fatigue_params
-        if fatigue_def_params:
-            self.fatigue_def_params.update(fatigue_def_params)
+        self.fatigue_params = default_params
+        if fatigue_params:
+            self.fatigue_params.update(fatigue_params)
 
-        # Additional properties for run tracking and results
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_dir = os.path.join(results_base_dir, f"{self.run_id}_{self.model_type}")
+        suffix = 'tuned' if tune_hyperparameters else 'default'
+        self.run_dir = os.path.join(RESULTS_BASE_DIR,
+                                    f"{self.run_id}_{model_type}_{suffix}")
         os.makedirs(self.run_dir, exist_ok=True)
-        
-        # Initialize sentiment analysis tools if requested
-        self.sentiment_analyzer = None
-        if self.use_sentiment_analysis:
-            self._initialize_sentiment_analyzer()
-            
-        # Model and results properties
-        self.data = None  # Will store the raw data
-        self.processed_data = None  # Will store processed data
-        self.model = None  # Will store the trained model
-        self.feature_importances = None  # Will store feature importances
-        self.evaluation_results = None  # Will store evaluation metrics
-            
-    def _initialize_sentiment_analyzer(self):
-        """Initialize the appropriate sentiment analyzer based on settings."""
-        if self.sentiment_model == 'vader':
-            if not NLTK_AVAILABLE:
-                print("NLTK not available. Cannot initialize VADER sentiment analyzer.")
-                return
-                
-            try:
-                # Download necessary NLTK data if not already present
-                nltk.download('vader_lexicon', quiet=True)
-                nltk.download('punkt', quiet=True)
-                self.sentiment_analyzer = SentimentIntensityAnalyzer()
-                print("VADER sentiment analyzer initialized successfully.")
-            except Exception as e:
-                print(f"Error initializing VADER sentiment analyzer: {e}")
-                self.use_sentiment_analysis = False
-                
-        elif self.sentiment_model == 'transformers':
-            if not TRANSFORMERS_AVAILABLE:
-                print("Transformers library not available. Cannot initialize transformer sentiment analyzer.")
-                return
-                
-            try:
-                # Initialize the transformer sentiment pipeline
-                self.sentiment_analyzer = pipeline(
-                    "sentiment-analysis",
-                    model="distilbert-base-uncased-finetuned-sst-2-english",
-                    truncation=True
-                )
-                print("Transformer sentiment analyzer initialized successfully.")
-            except Exception as e:
-                print(f"Error initializing transformer sentiment analyzer: {e}")
-                self.use_sentiment_analysis = False
-        else:
-            print(f"Unknown sentiment model: {self.sentiment_model}")
-            self.use_sentiment_analysis = False
-    
+
+        self.data = None
+        self.model = None
+        self.feature_names = None
+        self.evaluation_results = None
+
+    # ------------------------------------------------------------------
+    # Data loading & preprocessing
+    # ------------------------------------------------------------------
+
     def load_and_preprocess_data(self):
-        """
-        Load COVID-19 data, sentiment data, and mobility data (if available),
-        then preprocess and combine them for analysis.
-        """
-        # Load main COVID data
-        print(f"Loading COVID data from {self.data_path}...")
-        self.covid_data = pd.read_csv(self.data_path, parse_dates=[self.date_col])
-        
-        # Load sentiment data if available and requested
-        self.sentiment_data = None
-        if self.use_sentiment_analysis and self.sentiment_data_path:
-            try:
-                print(f"Loading sentiment data from {self.sentiment_data_path}...")
-                self.sentiment_data = pd.read_csv(self.sentiment_data_path, parse_dates=['date'])
-                print(f"Loaded sentiment data with {len(self.sentiment_data)} rows.")
-            except Exception as e:
-                print(f"Error loading sentiment data: {e}")
-                self.use_sentiment_analysis = False
-                
-        # Load mobility data if available and requested
-        self.mobility_data = None
-        if self.use_mobility_data and self.mobility_data_path:
-            try:
-                print(f"Loading mobility data from {self.mobility_data_path}...")
-                self.mobility_data = pd.read_csv(self.mobility_data_path, parse_dates=['date'])
-                print(f"Loaded mobility data with {len(self.mobility_data)} rows.")
-            except Exception as e:
-                print(f"Error loading mobility data: {e}")
-                self.use_mobility_data = False
-        
-        # Preprocess and merge datasets
-        self._preprocess_and_merge_data()
-        
-    def _preprocess_and_merge_data(self):
-        """Preprocess each dataset and merge them based on country and date."""
-        # Process COVID data
-        # ...existing code for COVID data preprocessing...
-        
-        # Process sentiment data if available
-        if self.sentiment_data is not None:
-            # Convert date to datetime if needed
-            if not pd.api.types.is_datetime64_dtype(self.sentiment_data['date']):
-                self.sentiment_data['date'] = pd.to_datetime(self.sentiment_data['date'])
-            
-            # Standardize country/location column name if different
-            if 'country' in self.sentiment_data.columns and self.country_col != 'country':
-                self.sentiment_data = self.sentiment_data.rename(columns={'country': self.country_col})
-                
-            # Aggregate sentiment data by day and country
-            agg_cols = ['sentiment_score', 'positive_ratio', 'negative_ratio', 'neutral_ratio']
-            available_cols = [col for col in agg_cols if col in self.sentiment_data.columns]
-            
-            if available_cols:
-                sentiment_agg = self.sentiment_data.groupby([self.country_col, 'date'])[available_cols].mean().reset_index()
-                
-                # Merge with COVID data
-                self.covid_data = pd.merge(
-                    self.covid_data, 
-                    sentiment_agg, 
-                    on=[self.country_col, self.date_col], 
-                    how='left'
-                )
-                
-                # Create lagged sentiment features (7, 14, 21 days)
-                for lag in [7, 14, 21]:
-                    for col in available_cols:
-                        self.covid_data[f'{col}_lag_{lag}'] = self.covid_data.groupby(self.country_col)[col].shift(lag)
-            
-        # Process mobility data if available
-        if self.mobility_data is not None:
-            # Convert date to datetime if needed
-            if not pd.api.types.is_datetime64_dtype(self.mobility_data['date']):
-                self.mobility_data['date'] = pd.to_datetime(self.mobility_data['date'])
-            
-            # Standardize country/location column name if different
-            if 'country' in self.mobility_data.columns and self.country_col != 'country':
-                self.mobility_data = self.mobility_data.rename(columns={'country': self.country_col})
-                
-            # Define mobility columns - adjust based on actual data format
-            mobility_cols = [col for col in self.mobility_data.columns 
-                            if any(term in col.lower() for term in ['retail', 'grocery', 'parks', 
-                                                               'transit', 'workplace', 'residential'])]
-            
-            if mobility_cols:
-                # Merge with COVID data
-                self.covid_data = pd.merge(
-                    self.covid_data, 
-                    self.mobility_data[[self.country_col, 'date'] + mobility_cols], 
-                    on=[self.country_col, self.date_col], 
-                    how='left'
-                )
-                
-                # Create lagged mobility features (7, 14 days)
-                for lag in [7, 14]:
-                    for col in mobility_cols:
-                        self.covid_data[f'{col}_lag_{lag}'] = self.covid_data.groupby(self.country_col)[col].shift(lag)
-        
-        # Compute sentiment from text data if available and no pre-computed sentiment
-        if self.use_sentiment_analysis and 'tweet_text' in self.covid_data.columns:
-            print("Computing sentiment scores from text data...")
-            self.covid_data['computed_sentiment'] = self.covid_data['tweet_text'].apply(self._compute_sentiment)
-        
-        # Store preprocessed data
-        self.data = self.covid_data
-        print(f"Preprocessing complete. Final dataset has {len(self.data)} rows and {len(self.data.columns)} columns.")
-    
-    def _compute_sentiment(self, text):
-        """Compute sentiment score for a given text using the initialized analyzer."""
-        if not self.sentiment_analyzer or not isinstance(text, str):
-            return 0.0
-            
-        try:
-            if self.sentiment_model == 'vader':
-                # VADER returns a dictionary with different scores
-                scores = self.sentiment_analyzer.polarity_scores(text)
-                return scores['compound']  # The compound score is a normalized score between -1 and 1
-                
-            elif self.sentiment_model == 'transformers':
-                # Transformers pipeline returns a list with label and score
-                result = self.sentiment_analyzer(text)[0]
-                # Convert POSITIVE/NEGATIVE to a score between -1 and 1
-                score = result['score']
-                if result['label'] == 'NEGATIVE':
-                    score = -score
-                return score
-        except Exception as e:
-            print(f"Error computing sentiment for text: {e}")
-            return 0.0
+        """Load OWID data, filter to countries with sufficient data, sort by location+date."""
+        print(f"Loading data from {self.data_path}...")
+        df = pd.read_csv(self.data_path, parse_dates=[self.date_col])
+        df.sort_values([self.country_col, self.date_col], inplace=True)
+
+        # Filter out aggregates
+        aggregates = {'World', 'Europe', 'European Union', 'Asia', 'Africa',
+                      'North America', 'South America', 'Oceania',
+                      'High income', 'Low income', 'Lower middle income',
+                      'Upper middle income', 'International'}
+        df = df[~df[self.country_col].isin(aggregates)].copy()
+
+        # Keep countries with enough stringency + case data
+        required_cols = ['stringency_index', 'new_cases_smoothed_per_million']
+        valid_countries = []
+        for country, group in df.groupby(self.country_col):
+            valid_rows = group[required_cols].dropna(how='any')
+            if len(valid_rows) >= 100:
+                valid_countries.append(country)
+
+        df = df[df[self.country_col].isin(valid_countries)].copy()
+        print(f"Retained {len(valid_countries)} countries with sufficient data.")
+
+        self.data = df
+        return df
+
+    # ------------------------------------------------------------------
+    # Fatigue definition
+    # ------------------------------------------------------------------
 
     def define_fatigue_periods(self):
         """
-        Define pandemic fatigue periods based on the criteria specified in fatigue_def_params.
-        
-        Pandemic fatigue is characterized by:
-        1. Sustained high stringency measures
-        2. Increasing or high transmission despite restrictions
-        
-        Now enhanced with sentiment data where available.
-        """
-        # ...existing fatigue period definition code...
-        
-        # Incorporate sentiment data if available
-        if 'sentiment_score' in self.data.columns:
-            # Define additional fatigue indicators based on sentiment
-            # Example: Identify periods where sentiment becomes significantly more negative
-            # during high stringency periods
-            
-            # Calculate rolling sentiment average
-            self.data['sentiment_14d_avg'] = self.data.groupby(self.country_col)['sentiment_score'].transform(
-                lambda x: x.rolling(14, min_periods=7).mean()
-            )
-            
-            # Calculate sentiment change rate
-            self.data['sentiment_change'] = self.data.groupby(self.country_col)['sentiment_14d_avg'].transform(
-                lambda x: x.pct_change(periods=7)
-            )
-            
-            # Define sentiment-based fatigue as periods of high stringency + deteriorating sentiment
-            stringency_high = self._get_high_stringency_periods()
-            sentiment_deteriorating = (self.data['sentiment_change'] < -0.1)  # 10% deterioration threshold
-            
-            # Combine with existing fatigue definition
-            self.data['sentiment_fatigue'] = stringency_high & sentiment_deteriorating
-            
-            # Create a combined fatigue indicator
-            if 'fatigue_indicator' in self.data.columns:
-                self.data['combined_fatigue'] = self.data['fatigue_indicator'] | self.data['sentiment_fatigue']
-            else:
-                print("Warning: Main fatigue indicator not found, using sentiment-based definition only")
-                self.data['fatigue_indicator'] = self.data['sentiment_fatigue']
-                
-        # Incorporate mobility data if available
-        mobility_cols = [col for col in self.data.columns 
-                        if any(term in col.lower() for term in ['retail', 'grocery', 'parks', 
-                                                           'transit', 'workplace', 'residential'])]
-        
-        if mobility_cols:
-            # Define mobility-based fatigue (e.g., increasing mobility despite high restrictions)
-            # ...code to define mobility-based fatigue indicators...
-            pass
-        
-        # --- Ensure a main fatigue indicator is always created ---
-        if 'fatigue_indicator' not in self.data.columns:
-            # Simple operationalization: high stringency + rising cases
-            stringency_threshold = self.fatigue_def_params.get('stringency_threshold', 60) if self.fatigue_def_params else 60
-            case_increase_window = self.fatigue_def_params.get('case_increase_window', 14) if self.fatigue_def_params else 14
-            case_increase_threshold = self.fatigue_def_params.get('case_increase_threshold', 0.2) if self.fatigue_def_params else 0.2
-            
-            # High stringency
-            self.data['high_stringency'] = self.data['stringency_index'] >= stringency_threshold
-            # Rolling case increase
-            self.data['case_rolling_avg'] = self.data.groupby(self.country_col)['new_cases_smoothed_per_million'].transform(lambda x: x.rolling(case_increase_window, min_periods=7).mean())
-            self.data['case_pct_change'] = self.data.groupby(self.country_col)['case_rolling_avg'].transform(lambda x: x.pct_change(periods=case_increase_window))
-            self.data['rising_cases'] = self.data['case_pct_change'] > case_increase_threshold
-            # Fatigue indicator: high stringency & rising cases
-            self.data['fatigue_indicator'] = self.data['high_stringency'] & self.data['rising_cases']
+        Label each row as fatigue (1) or non-fatigue (0).
 
-        # Ensure target variable is properly set
-        self.target_variable_name = 'combined_fatigue' if 'combined_fatigue' in self.data.columns else self.target_variable_name
-        
-        print(f"Fatigue periods defined. Using target variable: {self.target_variable_name}")
+        Fatigue = high stringency AND cases rising over the lookback window.
+        This captures periods where restrictions are strong but transmission
+        is increasing anyway, suggesting reduced compliance.
+        """
+        if self.data is None:
+            raise ValueError("Call load_and_preprocess_data first.")
 
-    def train_model(self, data, features, target=None, test_size=0.2, random_state=42):
+        df = self.data
+        params = self.fatigue_params
+
+        # Rolling average of cases
+        df['case_rolling_avg'] = df.groupby(self.country_col)[
+            'new_cases_smoothed_per_million'
+        ].transform(lambda x: x.rolling(params['case_lookback_window'], min_periods=7).mean())
+
+        # Percent change over the lookback window
+        df['case_pct_change'] = df.groupby(self.country_col)[
+            'case_rolling_avg'
+        ].transform(lambda x: x.pct_change(periods=params['case_lookback_window']))
+
+        # Binary indicators
+        df['high_stringency'] = (df['stringency_index'] >= params['stringency_threshold']).astype(int)
+        df['rising_cases'] = (df['case_pct_change'] > params['case_increase_threshold']).astype(int)
+
+        # Fatigue = both conditions met
+        df['fatigue_indicator'] = (df['high_stringency'] & df['rising_cases']).astype(int)
+
+        n_fatigue = df['fatigue_indicator'].sum()
+        n_total = df['fatigue_indicator'].notna().sum()
+        print(f"Fatigue periods defined: {n_fatigue} fatigue days out of {n_total} "
+              f"({100*n_fatigue/n_total:.1f}%)")
+
+        self.data = df
+
+    # ------------------------------------------------------------------
+    # Feature engineering
+    # ------------------------------------------------------------------
+
+    def engineer_features(self):
         """
-        Train a model to predict pandemic fatigue based on available features.
-        Now supports multiple model types and advanced feature selection.
+        Create features for the classification model.
+
+        Features include:
+        - Smoothed epidemiological indicators and their z-scores
+        - Interaction terms with stringency
+        - Rolling volatility measures
+        - Vaccination progress
         """
-        if target is None:
-            target = self.target_variable_name
-        X = data[features]
-        y = data[target].astype(int)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, shuffle=False)
-        
-        # Create the model based on specified type
+        if self.data is None or 'fatigue_indicator' not in self.data.columns:
+            raise ValueError("Call define_fatigue_periods first.")
+
+        df = self.data
+
+        # Base columns to use as features
+        epi_cols = [
+            'reproduction_rate',
+            'new_cases_smoothed_per_million',
+            'new_tests_smoothed_per_thousand',
+            'stringency_index',
+            'people_vaccinated_per_hundred',
+            'positive_rate',
+        ]
+
+        # Smoothed versions (7-day rolling mean per country)
+        for col in epi_cols:
+            if col in df.columns:
+                smoothed = f'{col}_smoothed'
+                df[smoothed] = df.groupby(self.country_col)[col].transform(
+                    lambda x: x.rolling(7, min_periods=3).mean()
+                )
+
+        smoothed_cols = [f'{c}_smoothed' for c in epi_cols if f'{c}_smoothed' in df.columns]
+
+        # Interaction terms: each smoothed feature × stringency
+        for col in smoothed_cols:
+            if col != 'stringency_index_smoothed':
+                interaction = f'{col}_x_stringency'
+                df[interaction] = df[col] * df.get('stringency_index_smoothed', 0)
+
+        # Rolling standard deviation (volatility) over 7 days
+        for col in smoothed_cols:
+            std_col = f'{col}_roll7_std'
+            df[std_col] = df.groupby(self.country_col)[col].transform(
+                lambda x: x.rolling(7, min_periods=3).std()
+            )
+
+        # Z-scores within each country
+        for col in smoothed_cols:
+            zscore_col = f'{col}_zscore'
+            df[zscore_col] = df.groupby(self.country_col)[col].transform(
+                lambda x: (x - x.expanding(min_periods=14).mean()) /
+                          (x.expanding(min_periods=14).std() + 1e-10)
+            )
+
+        # Stringency volatility (how much policy is changing)
+        df['stringency_volatility'] = df.groupby(self.country_col)[
+            'stringency_index'
+        ].transform(lambda x: x.rolling(14, min_periods=7).std())
+
+        # Collect all engineered feature columns
+        feature_cols = []
+        for col in df.columns:
+            if any(col.endswith(suffix) for suffix in
+                   ['_smoothed', '_x_stringency', '_roll7_std', '_zscore', '_volatility']):
+                feature_cols.append(col)
+
+        self.feature_names = sorted(feature_cols)
+        self.data = df
+        print(f"Engineered {len(self.feature_names)} features.")
+        return self.feature_names
+
+    # ------------------------------------------------------------------
+    # Model training
+    # ------------------------------------------------------------------
+
+    def train_model(self, test_size=0.2):
+        """
+        Train a classification model to predict fatigue periods.
+
+        Uses a chronological train/test split (no shuffle) to respect
+        the time-series nature of the data.
+        """
+        if self.feature_names is None:
+            raise ValueError("Call engineer_features first.")
+
+        df = self.data.dropna(subset=self.feature_names + ['fatigue_indicator']).copy()
+        if len(df) == 0:
+            raise ValueError("No rows remaining after dropping NaNs.")
+
+        X = df[self.feature_names]
+        y = df['fatigue_indicator'].astype(int)
+
+        # Chronological split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, shuffle=False
+        )
+
+        print(f"Train: {len(X_train)} rows, Test: {len(X_test)} rows")
+        print(f"Train fatigue rate: {y_train.mean():.3f}, Test fatigue rate: {y_test.mean():.3f}")
+
+        # Build pipeline
         if self.model_type == 'LogisticRegression':
-            base_model = LogisticRegression(random_state=42, class_weight='balanced')
+            base_model = LogisticRegression(random_state=42, max_iter=1000,
+                                            class_weight='balanced')
             param_grid = {
-                'C': [0.01, 0.1, 1, 10, 100],
-                'penalty': ['l1', 'l2'],
-                'solver': ['liblinear', 'saga']
-            } if self.tune_hyperparameters else {}
-            
+                'model__C': [0.01, 0.1, 1, 10],
+                'model__solver': ['liblinear', 'lbfgs']
+            }
         elif self.model_type == 'GradientBoosting':
             base_model = GradientBoostingClassifier(random_state=42)
             param_grid = {
-                'n_estimators': [100, 200, 300],
-                'learning_rate': [0.01, 0.05, 0.1],
-                'max_depth': [3, 5, 7]
-            } if self.tune_hyperparameters else {}
-            
+                'model__n_estimators': [100, 200],
+                'model__learning_rate': [0.05, 0.1],
+                'model__max_depth': [3, 5]
+            }
         elif self.model_type == 'RandomForest':
             base_model = RandomForestClassifier(random_state=42, class_weight='balanced')
             param_grid = {
-                'n_estimators': [100, 200, 300],
-                'max_features': ['auto', 'sqrt'],
-                'max_depth': [10, 20, 30, None]
-            } if self.tune_hyperparameters else {}
-            
+                'model__n_estimators': [100, 200],
+                'model__max_depth': [10, 20, None]
+            }
         else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
+            raise ValueError(f"Unknown model_type: {self.model_type}")
 
-        # Create the full modeling pipeline with preprocessing
-        pipeline_steps = [
+        pipeline = Pipeline([
             ('imputer', KNNImputer(n_neighbors=5)),
             ('scaler', StandardScaler()),
             ('model', base_model)
-        ]
-        
-        model_pipeline = Pipeline(pipeline_steps)
-        
-        # Implement hyperparameter tuning if requested
-        if self.tune_hyperparameters and param_grid:
-            time_series_cv = TimeSeriesSplit(n_splits=5)
-            model = GridSearchCV(
-                model_pipeline,
-                param_grid={f'model__{param}': values for param, values in param_grid.items()},
-                cv=time_series_cv,
-                scoring='balanced_accuracy',
-                n_jobs=-1
-            )
+        ])
+
+        if self.tune_hyperparameters:
+            print(f"Tuning {self.model_type} hyperparameters...")
+            tscv = TimeSeriesSplit(n_splits=5)
+            grid = GridSearchCV(pipeline, param_grid, cv=tscv,
+                                scoring='balanced_accuracy', n_jobs=-1)
+            grid.fit(X_train, y_train)
+            best_model = grid.best_estimator_
+            best_params = grid.best_params_
+            print(f"Best params: {best_params}")
         else:
-            model = model_pipeline
-            
-        # Fit the model
-        model.fit(X_train, y_train)
-        
-        # Extract best model if using GridSearchCV
-        if self.tune_hyperparameters and param_grid:
-            print(f"Best parameters: {model.best_params_}")
-            self.best_params = model.best_params_
-            best_model = model.best_estimator_
-        else:
-            best_model = model
-            
-        # Make predictions and evaluate
+            print(f"Training {self.model_type} with defaults...")
+            best_model = pipeline
+            best_model.fit(X_train, y_train)
+            best_params = 'default'
+
+        # Evaluate
         y_pred = best_model.predict(X_test)
-        y_pred_proba = best_model.predict_proba(X_test)[:, 1] if hasattr(best_model, "predict_proba") else None
-        
-        # Calculate evaluation metrics
+        y_proba = (best_model.predict_proba(X_test)[:, 1]
+                   if hasattr(best_model, 'predict_proba') else None)
+
         evaluation = {
-            'accuracy': accuracy_score(y_test, y_pred),
-            'balanced_accuracy': balanced_accuracy_score(y_test, y_pred),
-            'f1': f1_score(y_test, y_pred),
-            'classification_report': classification_report(y_test, y_pred, output_dict=True)
+            'accuracy': float(accuracy_score(y_test, y_pred)),
+            'balanced_accuracy': float(balanced_accuracy_score(y_test, y_pred)),
+            'f1_weighted': float(f1_score(y_test, y_pred, average='weighted')),
+            'f1_fatigue_class': float(f1_score(y_test, y_pred, pos_label=1)),
+            'classification_report': classification_report(y_test, y_pred, output_dict=True),
         }
-        
-        if y_pred_proba is not None:
-            evaluation['roc_auc'] = roc_auc_score(y_test, y_pred_proba)
-            
-        # Extract feature importances if available
-        if hasattr(best_model, 'named_steps') and hasattr(best_model.named_steps['model'], 'feature_importances_'):
-            feature_importances = best_model.named_steps['model'].feature_importances_
-            feature_names = X_train.columns
-            self.feature_importances = {name: importance for name, importance in zip(feature_names, feature_importances)}
-        
-        # Save model and results
+        if y_proba is not None:
+            try:
+                evaluation['roc_auc'] = float(roc_auc_score(y_test, y_proba))
+            except ValueError:
+                evaluation['roc_auc'] = None
+
         self.model = best_model
         self.evaluation_results = evaluation
-        
-        # Save to disk
-        joblib.dump(best_model, os.path.join(self.run_dir, f'{self.model_type}_model.pkl'))
-        with open(os.path.join(self.run_dir, 'evaluation_results.json'), 'w') as f:
-            json.dump(evaluation, f)
-            
-        if self.feature_importances:
-            with open(os.path.join(self.run_dir, 'feature_importances.json'), 'w') as f:
-                json.dump(self.feature_importances, f)
-                
-        print(f"Model training complete. Balanced accuracy: {evaluation.get('balanced_accuracy', 'N/A')}")
-        
+
+        # Extract feature importances / coefficients
+        feature_importance = self._extract_feature_importance(best_model)
+
+        # Save everything
+        self._save_results(best_params, evaluation, feature_importance,
+                           X_test, y_test, y_pred)
+
+        print(f"\nBalanced accuracy: {evaluation['balanced_accuracy']:.4f}")
+        if evaluation.get('roc_auc'):
+            print(f"ROC AUC: {evaluation['roc_auc']:.4f}")
+        print(f"F1 (fatigue class): {evaluation['f1_fatigue_class']:.4f}")
+
         return evaluation
+
+    def _extract_feature_importance(self, model_pipeline):
+        """Extract feature importances or coefficients from the trained pipeline."""
+        inner_model = model_pipeline.named_steps['model']
+
+        if hasattr(inner_model, 'feature_importances_'):
+            importances = inner_model.feature_importances_
+        elif hasattr(inner_model, 'coef_'):
+            importances = inner_model.coef_[0]
+        else:
+            return None
+
+        importance_df = pd.DataFrame({
+            'feature': self.feature_names,
+            'importance': importances
+        }).sort_values('importance', key=abs, ascending=False)
+
+        return importance_df
+
+    # ------------------------------------------------------------------
+    # Saving results
+    # ------------------------------------------------------------------
+
+    def _save_results(self, best_params, evaluation, feature_importance,
+                      X_test, y_test, y_pred):
+        """Save model, evaluation, and predictions to the run directory."""
+
+        # Model pipeline
+        model_path = os.path.join(self.run_dir, 'model_pipeline.pkl')
+        joblib.dump(self.model, model_path)
+
+        # Run details
+        details = {
+            'run_id': self.run_id,
+            'timestamp': datetime.now().isoformat(),
+            'model_type': self.model_type,
+            'hyperparameters_tuned': self.tune_hyperparameters,
+            'best_params': str(best_params),
+            'fatigue_params': self.fatigue_params,
+            'n_features': len(self.feature_names),
+            'feature_names': self.feature_names,
+            'evaluation': evaluation,
+        }
+        with open(os.path.join(self.run_dir, 'run_details.json'), 'w') as f:
+            json.dump(details, f, indent=2, default=str)
+
+        # Feature importances
+        if feature_importance is not None:
+            feature_importance.to_csv(
+                os.path.join(self.run_dir, 'feature_coefficients.csv'), index=False
+            )
+
+        # Predictions
+        pred_df = pd.DataFrame({
+            'actual': y_test.values,
+            'predicted': y_pred
+        }, index=X_test.index)
+        pred_df.to_csv(os.path.join(self.run_dir, 'test_predictions_vs_actual.csv'))
+
+        # Human-readable summary
+        lines = [
+            "Pandemic Fatigue Prediction — Run Summary",
+            "=" * 50,
+            f"Run ID: {self.run_id}",
+            f"Model: {self.model_type}",
+            f"Tuned: {self.tune_hyperparameters}",
+            f"Best params: {best_params}",
+            "",
+            "Fatigue Definition:",
+            f"  Stringency threshold: >= {self.fatigue_params['stringency_threshold']}",
+            f"  Case increase threshold: > {self.fatigue_params['case_increase_threshold']*100:.0f}% "
+            f"over {self.fatigue_params['case_lookback_window']} days",
+            "",
+            "Evaluation:",
+            f"  Balanced accuracy: {evaluation['balanced_accuracy']:.4f}",
+            f"  ROC AUC: {evaluation.get('roc_auc', 'N/A')}",
+            f"  F1 (fatigue class): {evaluation['f1_fatigue_class']:.4f}",
+            f"  Accuracy: {evaluation['accuracy']:.4f}",
+        ]
+
+        if feature_importance is not None:
+            lines.append("\nTop 10 Features:")
+            for _, row in feature_importance.head(10).iterrows():
+                lines.append(f"  {row['feature']}: {row['importance']:.4f}")
+
+        with open(os.path.join(self.run_dir, 'run_summary.txt'), 'w') as f:
+            f.write('\n'.join(lines))
+
+        print(f"Results saved to: {self.run_dir}")
+
+
+# ======================================================================
+# CLI entry point
+# ======================================================================
+
+if __name__ == "__main__":
+    predictor = PandemicFatiguePredictor(
+        data_path='owid-covid-data.csv',
+        model_type='LogisticRegression',
+        tune_hyperparameters=True,
+    )
+
+    try:
+        predictor.load_and_preprocess_data()
+        predictor.define_fatigue_periods()
+        predictor.engineer_features()
+        predictor.train_model()
+    except FileNotFoundError:
+        print("Error: owid-covid-data.csv not found.")
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()

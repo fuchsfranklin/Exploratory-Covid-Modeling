@@ -1,720 +1,504 @@
 """
 Policy Effectiveness Lag Analysis
 
-This module provides comprehensive analysis of the temporal relationship between
-COVID-19 policy interventions (measured by the stringency index) and epidemiological outcomes.
-It implements multiple advanced time-series methods to quantify the lag between
-policy changes and their observable effects on key metrics like case rates, death rates,
-and reproduction numbers.
+Analyzes the temporal relationship between COVID-19 policy interventions
+(stringency index) and epidemiological outcomes (cases, deaths, reproduction rate).
 
-Enhanced with causal inference techniques and regional analysis for more robust
-identification of policy effects, particularly for high-quality data subsets.
+Methods implemented:
+1. Cross-correlation function (CCF) analysis
+2. Granger causality testing
+3. Wavelet coherence analysis for time-varying relationships
 
-Key features:
-1. Robust time-series preprocessing with stationarity testing and transformation
-2. Multiple methodologies for lag identification:
-   - Cross-correlation function (CCF) analysis
-   - Granger causality testing with statistical significance
-   - Transfer function modeling
-   - Wavelet coherence analysis for time-varying relationships
-3. Causal inference techniques:
-   - Difference-in-differences analysis
-   - Synthetic control methods
-   - Regression discontinuity design around policy changes
-4. Regional analysis focusing on high-quality data subsets (US states, European regions)
-5. Policy decomposition to analyze specific interventions (masks, lockdowns, etc.)
-6. Comprehensive country-level and aggregated multi-country analysis
-7. Statistical validation of identified lags with confidence intervals
-8. Visualization and reporting capabilities for research publication
-
-The module supports public health decision-making by providing evidence-based
-estimates of when policy effects can be expected, helping to evaluate and
-design intervention strategies.
+Produces per-country and aggregate results with statistical validation.
 """
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import statsmodels.api as sm
-from statsmodels.tsa.stattools import ccf, grangercausalitytests, adfuller, kpss
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.statespace.varmax import VARMAX
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from statsmodels.nonparametric.smoothers_lowess import lowess
-from sklearn.preprocessing import MinMaxScaler, RobustScaler
-from sklearn.metrics import mean_squared_error
+from statsmodels.tsa.stattools import grangercausalitytests, adfuller
 from scipy import signal, stats
 import os
-import joblib
 import json
 import datetime
-from functools import partial
 import warnings
 from tqdm import tqdm
 
-# Try to import optional packages
 try:
-    import seaborn as sns
-    from matplotlib.ticker import MaxNLocator
     import pywt
-    OPTIONAL_PACKAGES_AVAILABLE = True
+    PYWT_AVAILABLE = True
 except ImportError:
-    print("Note: Some optional visualization packages are missing. Basic functionality will still work.")
-    OPTIONAL_PACKAGES_AVAILABLE = False
+    PYWT_AVAILABLE = False
+    print("Note: PyWavelets not available. Wavelet coherence will be skipped.")
 
-# Try to import causal inference packages
-try:
-    import causalinference
-    from causalinference import CausalModel
-    CAUSALINFERENCE_AVAILABLE = True
-except ImportError:
-    print("Note: CausalInference package not available. Causal inference analyses will be limited.")
-    CAUSALINFERENCE_AVAILABLE = False
-
-# Try to import synthetic control packages
-try:
-    from synth import Synth
-    SYNTH_AVAILABLE = True
-except ImportError:
-    print("Note: Synthetic control package not available. Synthetic control analyses will not be available.")
-    SYNTH_AVAILABLE = False
-
-# Try to import fixed effects regression packages
-try:
-    import linearmodels
-    from linearmodels.panel import PanelOLS
-    LINEARMODELS_AVAILABLE = True
-except ImportError:
-    print("Note: LinearModels package not available. Panel regression analyses will be limited.")
-    LINEARMODELS_AVAILABLE = False
-
-# Filter specific warnings from statsmodels that don't affect results
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", "The iteration is not making good progress")
 
-# Set up consistent visualization style
-plt.style.use('seaborn-v0_8-whitegrid')
-plt.rcParams['figure.figsize'] = (12, 8)
-plt.rcParams['axes.labelsize'] = 12
-plt.rcParams['axes.titlesize'] = 14
-plt.rcParams['axes.titleweight'] = 'bold'
-plt.rcParams['xtick.labelsize'] = 10
-plt.rcParams['ytick.labelsize'] = 10
-plt.rcParams['legend.fontsize'] = 10
-plt.rcParams['figure.titlesize'] = 16
-
-# Ensure necessary directories exist
 RESULTS_BASE_DIR = "results/policy_effectiveness"
 os.makedirs(RESULTS_BASE_DIR, exist_ok=True)
-os.makedirs('eda_outputs/per_country', exist_ok=True)
-os.makedirs('models', exist_ok=True)
+
 
 class PolicyLagAnalyzer:
     """
-    A comprehensive analyzer for quantifying and validating the time lag between 
-    policy interventions and epidemiological outcomes during the COVID-19 pandemic.
-    
-    This class implements multiple methodologies for identifying temporal relationships
-    between policy stringency and outcomes, with robust statistical validation,
-    causal inference techniques, and visualization capabilities for research publication.
-    
-    Enhanced with regional analysis capabilities and policy decomposition for analyzing
-    specific intervention types.
+    Quantifies the time lag between policy interventions and epidemiological
+    outcomes using cross-correlation, Granger causality, and wavelet coherence.
     """
-    
-    def __init__(self, 
-                 policy_columns=['stringency_index'],
-                 outcome_columns=['new_cases_smoothed_per_million', 'new_deaths_smoothed_per_million', 'reproduction_rate'],
+
+    def __init__(self,
+                 policy_col='stringency_index',
+                 outcome_columns=None,
                  countries=None,
                  max_lag=30,
-                 min_data_points=180,  # Minimum days needed for robust analysis
-                 stationarity_transform='diff',  # 'diff', 'log_diff', or 'none'
-                 significance_level=0.05,
-                 rolling_window_sizes=[7, 14, 21],
-                 detrend_data=True,
-                 analyze_subperiods=True,
-                 subperiod_length=90,  # For analyzing time-varying relationships
-                 use_causal_inference=True,  # Added for causal inference
-                 regional_analysis=True,  # Added for regional analysis
-                 high_quality_regions=None,  # Added for focusing on high-quality data regions
-                 decompose_policies=False,  # Added for policy decomposition
-                 policy_components=['masks', 'stay_at_home', 'business_closures', 'travel_restrictions']):  # Added policy types
+                 min_data_points=180,
+                 significance_level=0.05):
         """
-        Initialize the PolicyLagAnalyzer with configurable parameters for analysis.
-        
-        Parameters:
-        -----------
-        policy_columns : list
-            Column names for policy indicators (usually stringency index).
-        outcome_columns : list
-            Column names for outcome measures (e.g., cases, deaths, reproduction rate).
-        countries : list or None
-            Countries to analyze. If None, all available countries will be used.
-        max_lag : int
-            Maximum lag (in days) to consider between policy and outcome.
-        min_data_points : int
-            Minimum number of days with valid data required for including a country.
-        stationarity_transform : str
-            Transformation to apply for achieving stationarity ('diff', 'log_diff', 'none').
-        significance_level : float
-            P-value threshold for statistical significance.
-        rolling_window_sizes : list
-            Window sizes for rolling averages to reduce noise.
-        detrend_data : bool
-            Whether to remove trends from time series.
-        analyze_subperiods : bool
-            Whether to analyze time-varying relationships by period.
-        subperiod_length : int
-            Length of subperiods for time-varying analysis.
-        use_causal_inference : bool
-            Whether to apply causal inference methods.
-        regional_analysis : bool
-            Whether to analyze regions within countries (e.g., US states).
-        high_quality_regions : list or None
-            List of specific regions with high-quality data to focus on.
-        decompose_policies : bool
-            Whether to analyze specific policy components separately.
-        policy_components : list
-            Specific policy types to analyze when decompose_policies is True.
+        Args:
+            policy_col: Column name for the policy indicator.
+            outcome_columns: Outcome measure column names.
+            countries: Countries to analyze. None = auto-select from data.
+            max_lag: Maximum lag in days to test.
+            min_data_points: Minimum valid data points required per country.
+            significance_level: P-value threshold for statistical significance.
         """
-        self.policy_columns = policy_columns
-        self.outcome_columns = outcome_columns
+        self.policy_col = policy_col
+        self.outcome_columns = outcome_columns or [
+            'new_cases_smoothed_per_million',
+            'new_deaths_smoothed_per_million',
+            'reproduction_rate'
+        ]
         self.countries = countries
         self.max_lag = max_lag
         self.min_data_points = min_data_points
-        self.stationarity_transform = stationarity_transform
         self.significance_level = significance_level
-        self.rolling_window_sizes = rolling_window_sizes
-        self.detrend_data = detrend_data
-        self.analyze_subperiods = analyze_subperiods
-        self.subperiod_length = subperiod_length
-        
-        # New parameters for enhanced analysis
-        self.use_causal_inference = use_causal_inference
-        self.regional_analysis = regional_analysis
-        self.high_quality_regions = high_quality_regions
-        self.decompose_policies = decompose_policies
-        self.policy_components = policy_components
-        
-        # Check package availability
-        if self.use_causal_inference and not CAUSALINFERENCE_AVAILABLE:
-            print("Warning: Causal inference requested but required packages not available.")
-            self.use_causal_inference = False
-            
-        # Runtime properties
-        self.data = None
-        self.results = {}
-        self.visualizations = {}
+
         self.run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_dir = os.path.join(RESULTS_BASE_DIR, self.run_timestamp)
+        self.run_dir = os.path.join(RESULTS_BASE_DIR, f"{self.run_timestamp}_analysis")
         os.makedirs(self.run_dir, exist_ok=True)
 
-    def difference_in_differences(self, data, treatment_col, outcome_col, time_col, unit_col, treatment_time):
-        """
-        Perform difference-in-differences analysis to estimate causal effects.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Panel data with units, time, treatment, and outcome.
-        treatment_col : str
-            Column name for treatment indicator.
-        outcome_col : str
-            Column name for outcome measure.
-        time_col : str
-            Column name for time variable.
-        unit_col : str
-            Column name for unit identifiers.
-        treatment_time : int/date
-            Time point when treatment begins.
-            
-        Returns:
-        --------
-        dict
-            Results of difference-in-differences analysis.
-        """
-        if not CAUSALINFERENCE_AVAILABLE:
-            return {'error': 'CausalInference package not available'}
-            
-        try:
-            # Create treatment indicator
-            data = data.copy()
-            data['post_treatment'] = (data[time_col] >= treatment_time).astype(int)
-            data['did'] = data[treatment_col] * data['post_treatment']
-            
-            # Prepare model
-            Y = data[outcome_col].values
-            D = data[treatment_col].values
-            X = sm.add_constant(
-                np.column_stack((
-                    data['post_treatment'].values,
-                    data['did'].values
-                ))
-            )
-            
-            # Fit OLS with clustered standard errors
-            model = sm.OLS(Y, X)
-            results = model.fit(cov_type='cluster', cov_kwds={'groups': data[unit_col]})
-            
-            # Extract results
-            did_effect = results.params[2]  # Coefficient on the interaction term
-            p_value = results.pvalues[2]
-            ci_lower, ci_upper = results.conf_int().loc[2]
-            
-            return {
-                'effect_size': did_effect,
-                'p_value': p_value,
-                'significant': p_value < self.significance_level,
-                'ci_lower': ci_lower,
-                'ci_upper': ci_upper,
-                'model_summary': results.summary().as_text()
-            }
-        except Exception as e:
-            return {'error': f"Failed to perform difference-in-differences: {str(e)}"}
-            
-    def synthetic_control(self, data, treatment_unit, outcome_col, unit_col, time_col, treatment_time, predictors):
-        """
-        Perform synthetic control analysis for causal inference.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Panel data with units, time, and outcome.
-        treatment_unit : str/int
-            Identifier for the treated unit.
-        outcome_col : str
-            Column name for outcome measure.
-        unit_col : str
-            Column name for unit identifiers.
-        time_col : str
-            Column name for time variable.
-        treatment_time : int/date
-            Time point when treatment begins.
-        predictors : list
-            Column names for predictor variables.
-            
-        Returns:
-        --------
-        dict
-            Results of synthetic control analysis.
-        """
-        if not SYNTH_AVAILABLE:
-            return {'error': 'Synthetic control package not available'}
-            
-        try:
-            # Prepare data for synthetic control
-            pre_treatment = data[data[time_col] < treatment_time]
-            post_treatment = data[data[time_col] >= treatment_time]
-            
-            # Create synthetic control object
-            synth = Synth(
-                data=data,
-                outcome=outcome_col,
-                unit_col=unit_col,
-                time_col=time_col,
-                treatment_unit=treatment_unit,
-                treatment_time=treatment_time,
-                predictors=predictors
-            )
-            
-            # Fit synthetic control
-            synth.fit()
-            
-            # Calculate treatment effect
-            att = synth.att()
-            
-            # Calculate p-value using placebo test
-            p_value = synth.pvalue(method='placebo')
-            
-            return {
-                'att': att,
-                'p_value': p_value,
-                'significant': p_value < self.significance_level,
-                'weights': synth.weights,
-                'pre_treatment_fit': synth.mspe(),
-                'synth_object': synth
-            }
-        except Exception as e:
-            return {'error': f"Failed to perform synthetic control analysis: {str(e)}"}
-            
-    def fixed_effects_regression(self, data, outcome_col, policy_col, unit_col, time_col, controls=None):
-        """
-        Perform panel fixed effects regression to estimate policy effects.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Panel data with units, time, policy, and outcome.
-        outcome_col : str
-            Column name for outcome measure.
-        policy_col : str
-            Column name for policy measure.
-        unit_col : str
-            Column name for unit identifiers.
-        time_col : str
-            Column name for time variable.
-        controls : list, optional
-            Column names for control variables.
-            
-        Returns:
-        --------
-        dict
-            Results of fixed effects regression.
-        """
-        if not LINEARMODELS_AVAILABLE:
-            return {'error': 'LinearModels package not available'}
-            
-        try:
-            # Prepare panel data
-            data = data.copy()
-            data = data.set_index([unit_col, time_col])
-            
-            # Define formula
-            exog_vars = [policy_col]
-            if controls:
-                exog_vars.extend(controls)
-                
-            exog = sm.add_constant(data[exog_vars])
-            
-            # Fit fixed effects model
-            model = PanelOLS(
-                data[outcome_col], 
-                exog,
-                entity_effects=True,
-                time_effects=True
-            )
-            results = model.fit(cov_type='clustered', cluster_entity=True)
-            
-            # Extract results
-            policy_effect = results.params[policy_col]
-            p_value = results.pvalues[policy_col]
-            
-            return {
-                'effect_size': policy_effect,
-                'p_value': p_value,
-                'significant': p_value < self.significance_level,
-                'model_summary': results.summary.as_text()
-            }
-        except Exception as e:
-            return {'error': f"Failed to perform fixed effects regression: {str(e)}"}
-            
-    def analyze_regional_policy_effects(self, data, regions, policy_col, outcome_col, date_col, region_col, 
-                                      max_lag=30, methods=None):
-        """
-        Analyze policy effects for specific regions with high-quality data.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Data containing regional COVID and policy information.
-        regions : list
-            List of regions to analyze.
-        policy_col : str
-            Column name for policy measure.
-        outcome_col : str
-            Column name for outcome measure.
-        date_col : str
-            Column name for date.
-        region_col : str
-            Column name for region identifier.
-        max_lag : int
-            Maximum lag to consider.
-        methods : list, optional
-            Specific analysis methods to use.
-            
-        Returns:
-        --------
-        dict
-            Results of regional policy analysis by region.
-        """
-        if methods is None:
-            methods = ['ccf', 'granger', 'wavelet']
-            
-            if self.use_causal_inference:
-                methods.extend(['did', 'synthetic_control', 'fixed_effects'])
-                
-        results = {}
-        
-        for region in tqdm(regions, desc="Analyzing regions"):
-            region_data = data[data[region_col] == region].copy()
-            
-            if len(region_data) < self.min_data_points:
-                results[region] = {'error': f"Insufficient data points ({len(region_data)})" }
-                continue
-                
-            region_results = {}
-            
-            # Time series analyses
-            if 'ccf' in methods:
-                region_results['ccf'] = self._analyze_ccf(
-                    region_data[policy_col].values,
-                    region_data[outcome_col].values,
-                    max_lag=max_lag
-                )
-                
-            if 'granger' in methods:
-                region_results['granger'] = self._analyze_granger_causality(
-                    region_data[policy_col].values,
-                    region_data[outcome_col].values,
-                    max_lag=max_lag
-                )
-                
-            if 'wavelet' in methods and OPTIONAL_PACKAGES_AVAILABLE:
-                region_results['wavelet'] = self._analyze_wavelet_coherence(
-                    region_data[policy_col].values,
-                    region_data[outcome_col].values
-                )
-                
-            # Causal inference methods
-            if 'did' in methods and self.use_causal_inference:
-                # Find significant policy changes as treatment points
-                policy_changes = self._identify_policy_changes(region_data, policy_col)
-                
-                if policy_changes:
-                    treatment_time = policy_changes[0]['date']
-                    region_data['treatment'] = (region_data[date_col] >= treatment_time).astype(int)
-                    
-                    # Need to create a comparison group - often neighboring regions
-                    # This is just a placeholder - actual implementation would require
-                    # gathering data from comparable regions
-                    # ...
-                    
-            if 'synthetic_control' in methods and self.use_causal_inference and SYNTH_AVAILABLE:
-                # Synthetic control requires multiple control units
-                # Implementation would require gathering data from all potential control regions
-                # ...
-                pass
-                
-            results[region] = region_results
-            
-        return results
-        
-    def decompose_policy_analysis(self, data, policy_components, outcome_col, date_col, region_col):
-        """
-        Analyze effects of specific policy components instead of aggregate stringency.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Data containing policy component indicators and outcomes.
-        policy_components : list
-            List of column names for specific policy measures.
-        outcome_col : str
-            Column name for outcome measure.
-        date_col : str
-            Column name for date.
-        region_col : str
-            Column name for region/country identifier.
-            
-        Returns:
-        --------
-        dict
-            Results of decomposed policy analysis by policy component.
-        """
-        results = {}
-        
-        for policy in policy_components:
-            if policy not in data.columns:
-                results[policy] = {'error': f"Policy component {policy} not found in data"}
-                continue
-                
-            policy_results = {}
-            
-            # Group by region/country
-            for region, group in data.groupby(region_col):
-                if len(group) < self.min_data_points:
-                    continue
-                    
-                # Analyze lag using CCF
-                ccf_result = self._analyze_ccf(
-                    group[policy].values,
-                    group[outcome_col].values,
-                    max_lag=self.max_lag
-                )
-                
-                # Analyze using Granger causality
-                granger_result = self._analyze_granger_causality(
-                    group[policy].values, 
-                    group[outcome_col].values,
-                    max_lag=self.max_lag
-                )
-                
-                policy_results[region] = {
-                    'ccf': ccf_result,
-                    'granger': granger_result
-                }
-                
-            # Aggregate results across regions
-            significant_lags = [
-                r['ccf']['best_lag'] for region, r in policy_results.items()
-                if r['ccf']['significant']
-            ]
-            
-            if significant_lags:
-                median_lag = np.median(significant_lags)
-                mean_lag = np.mean(significant_lags)
-                
-                results[policy] = {
-                    'median_lag': median_lag,
-                    'mean_lag': mean_lag,
-                    'regions_with_significant_effect': sum(1 for r in policy_results.values() if r['ccf']['significant']),
-                    'total_regions': len(policy_results),
-                    'detailed_results': policy_results
-                }
-            else:
-                results[policy] = {
-                    'significant_effect': False,
-                    'regions_with_significant_effect': 0,
-                    'total_regions': len(policy_results),
-                    'detailed_results': policy_results
-                }
-                
-        return results
-        
-    def _identify_policy_changes(self, data, policy_col, threshold_percentile=90):
-        """
-        Identify significant changes in policy stringency as potential treatment points.
-        
-        Parameters:
-        -----------
-        data : DataFrame
-            Time series data for a single region.
-        policy_col : str
-            Column name for policy measure.
-        threshold_percentile : int
-            Percentile to use as threshold for significant changes.
-            
-        Returns:
-        --------
-        list
-            List of dictionaries containing information about significant policy changes.
-        """
-        # Calculate day-to-day changes
-        data = data.copy().sort_values('date')
-        data['policy_change'] = data[policy_col].diff()
-        
-        # Find significant increases
-        threshold = np.percentile(data['policy_change'].abs(), threshold_percentile)
-        significant_changes = data[data['policy_change'].abs() >= threshold].copy()
-        
-        # Format results
-        changes = []
-        for _, row in significant_changes.iterrows():
-            changes.append({
-                'date': row['date'],
-                'magnitude': row['policy_change'],
-                'pre_level': row[policy_col] - row['policy_change'],
-                'post_level': row[policy_col]
-            })
-            
-        return sorted(changes, key=lambda x: abs(x['magnitude']), reverse=True)
+        self.data = None
+        self.results = {}
 
-    # ...existing time series methods (_analyze_ccf, _analyze_granger_causality, etc.)...
-                
-    def analyze_policy_effects(self, data_path, output_dir=None):
+    # ------------------------------------------------------------------
+    # Data loading & preparation
+    # ------------------------------------------------------------------
+
+    def load_data(self, csv_path):
+        """Load OWID data and select countries with sufficient data."""
+        df = pd.read_csv(csv_path, parse_dates=['date'])
+        df.sort_values(['location', 'date'], inplace=True)
+
+        # Filter to real countries (exclude aggregates like 'World', 'Europe', etc.)
+        aggregates = {'World', 'Europe', 'European Union', 'Asia', 'Africa',
+                      'North America', 'South America', 'Oceania',
+                      'High income', 'Low income', 'Lower middle income',
+                      'Upper middle income', 'International'}
+        df = df[~df['location'].isin(aggregates)].copy()
+
+        # Auto-select countries if not specified
+        if self.countries is None:
+            self.countries = self._select_countries(df)
+
+        self.data = df[df['location'].isin(self.countries)].copy()
+        print(f"Loaded data for {len(self.countries)} countries: {', '.join(self.countries)}")
+
+    def _select_countries(self, df):
+        """Select countries that have enough data for all required columns."""
+        required_cols = [self.policy_col] + self.outcome_columns
+        valid_countries = []
+
+        for country, group in df.groupby('location'):
+            valid_rows = group[required_cols].dropna(how='any')
+            if len(valid_rows) >= self.min_data_points:
+                valid_countries.append(country)
+
+        print(f"Found {len(valid_countries)} countries with >= {self.min_data_points} "
+              f"complete data points across all required columns.")
+        return valid_countries
+
+    def _make_stationary(self, series):
+        """First-difference a series to achieve stationarity. Returns differenced series."""
+        diffed = series.diff().dropna()
+        return diffed
+
+    def _prepare_country_series(self, country):
         """
-        Comprehensive analysis of policy effects using multiple methodologies,
-        including both time-series analysis and causal inference approaches.
-        
-        Parameters:
-        -----------
-        data_path : str
-            Path to CSV file containing COVID data.
-        output_dir : str, optional
-            Directory to save results. If None, uses the default run directory.
-            
-        Returns:
-        --------
-        dict
-            Comprehensive results of policy effectiveness analysis.
+        Extract and prepare policy + outcome series for a single country.
+        Returns dict of {outcome_col: (policy_series, outcome_series)} with
+        aligned, stationary, NaN-free series.
         """
-        # ...existing code for loading data...
-        
-        # Add regional analysis if requested
-        if self.regional_analysis:
-            print("Performing regional analysis...")
-            
-            # Identify regions with high-quality data
-            high_quality_regions = self.high_quality_regions or self._identify_high_quality_regions()
-            
-            # Analyze regional policy effects
-            regional_results = self.analyze_regional_policy_effects(
-                self.data,
-                high_quality_regions,
-                self.policy_columns[0],
-                self.outcome_columns[0],
-                'date',
-                'region'
-            )
-            
-            self.results['regional_analysis'] = regional_results
-            
-        # Add policy decomposition if requested
-        if self.decompose_policies and all(p in self.data.columns for p in self.policy_components):
-            print("Performing policy decomposition analysis...")
-            
-            policy_component_results = self.decompose_policy_analysis(
-                self.data,
-                self.policy_components,
-                self.outcome_columns[0],
-                'date',
-                'location'
-            )
-            
-            self.results['policy_component_analysis'] = policy_component_results
-            
-        # ...existing code for visualization and results saving...
-        
-        return self.results
-        
-    def _identify_high_quality_regions(self, min_data_completeness=0.8):
+        cdf = self.data[self.data['location'] == country].copy()
+        cdf = cdf.sort_values('date').set_index('date')
+
+        pairs = {}
+        for outcome_col in self.outcome_columns:
+            subset = cdf[[self.policy_col, outcome_col]].dropna()
+            if len(subset) < self.min_data_points:
+                continue
+
+            # Differencing for stationarity
+            policy_diff = self._make_stationary(subset[self.policy_col])
+            outcome_diff = self._make_stationary(subset[outcome_col])
+
+            # Align after differencing
+            aligned = pd.concat([policy_diff, outcome_diff], axis=1).dropna()
+            if len(aligned) < 60:  # Need enough points after differencing
+                continue
+
+            pairs[outcome_col] = (aligned[self.policy_col], aligned[outcome_col])
+
+        return pairs
+
+    # ------------------------------------------------------------------
+    # Analysis methods
+    # ------------------------------------------------------------------
+
+    def _analyze_ccf(self, policy_series, outcome_series):
         """
-        Identify regions with high-quality data based on completeness and consistency.
-        
-        Parameters:
-        -----------
-        min_data_completeness : float
-            Minimum ratio of non-missing values required.
-            
-        Returns:
-        --------
-        list
-            List of regions with high-quality data.
+        Cross-correlation analysis between policy and outcome at various lags.
+
+        Returns dict with best_lag, best_correlation, all correlations, and
+        whether the result is statistically significant.
         """
-        quality_metrics = {}
-        
-        for region, group in self.data.groupby('region'):
-            # Calculate data completeness
-            completeness = 1 - (group[self.policy_columns + self.outcome_columns].isna().sum().sum() / 
-                              (len(group) * (len(self.policy_columns) + len(self.outcome_columns))))
-                              
-            # Check for reporting consistency (e.g., no sudden jumps due to backlog reporting)
-            consistency_score = 0
-            for col in self.outcome_columns:
-                if col in group.columns:
-                    # Calculate day-to-day percent changes
-                    pct_changes = group[col].pct_change().abs()
-                    # Count extreme changes (>200%)
-                    extreme_changes = (pct_changes > 2).sum() / len(group)
-                    # Higher score means more consistent (fewer extreme changes)
-                    consistency_score += 1 - extreme_changes
-                    
-            consistency_score /= len(self.outcome_columns)
-            
-            # Combine metrics
-            quality_score = completeness * 0.6 + consistency_score * 0.4
-            
-            quality_metrics[region] = {
-                'completeness': completeness,
-                'consistency': consistency_score,
-                'quality_score': quality_score
+        n = len(policy_series)
+        policy_vals = policy_series.values
+        outcome_vals = outcome_series.values
+
+        # Normalize
+        policy_norm = (policy_vals - policy_vals.mean()) / (policy_vals.std() + 1e-10)
+        outcome_norm = (outcome_vals - outcome_vals.mean()) / (outcome_vals.std() + 1e-10)
+
+        correlations = {}
+        for lag in range(0, min(self.max_lag + 1, n // 3)):
+            if lag == 0:
+                corr = np.corrcoef(policy_norm, outcome_norm)[0, 1]
+            else:
+                corr = np.corrcoef(policy_norm[:-lag], outcome_norm[lag:])[0, 1]
+            correlations[lag] = corr
+
+        if not correlations:
+            return {'significant': False, 'error': 'No valid lags computed'}
+
+        # Find the lag with the strongest negative correlation
+        # (policy increase should reduce outcome)
+        best_lag = min(correlations, key=correlations.get)
+        best_corr = correlations[best_lag]
+
+        # Significance: Bartlett's approximation for confidence bounds
+        conf_bound = 1.96 / np.sqrt(n)
+        significant = abs(best_corr) > conf_bound
+
+        return {
+            'best_lag': int(best_lag),
+            'best_correlation': round(float(best_corr), 4),
+            'significant': bool(significant),
+            'confidence_bound': round(float(conf_bound), 4),
+            'correlations_by_lag': {int(k): round(float(v), 4) for k, v in correlations.items()}
+        }
+
+    def _analyze_granger(self, policy_series, outcome_series):
+        """
+        Granger causality test: does the policy series help predict the outcome?
+
+        Tests multiple lag orders up to max_lag (capped for data size).
+        Returns the best lag order and its p-value.
+        """
+        combined = pd.DataFrame({
+            'outcome': outcome_series.values,
+            'policy': policy_series.values
+        })
+
+        max_test_lag = min(self.max_lag, len(combined) // 5, 15)
+        if max_test_lag < 1:
+            return {'significant': False, 'error': 'Insufficient data for Granger test'}
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                results = grangercausalitytests(combined[['outcome', 'policy']], maxlag=max_test_lag, verbose=False)
+        except Exception as e:
+            return {'significant': False, 'error': str(e)}
+
+        # Extract the best (lowest p-value) lag
+        best_lag = None
+        best_pvalue = 1.0
+        lag_results = {}
+
+        for lag_order, result in results.items():
+            # Use the F-test p-value
+            f_test = result[0]['ssr_ftest']
+            p_value = f_test[1]
+            lag_results[int(lag_order)] = round(float(p_value), 6)
+
+            if p_value < best_pvalue:
+                best_pvalue = p_value
+                best_lag = lag_order
+
+        return {
+            'best_lag': int(best_lag) if best_lag else None,
+            'best_pvalue': round(float(best_pvalue), 6),
+            'significant': bool(best_pvalue < self.significance_level),
+            'pvalues_by_lag': lag_results
+        }
+
+    def _analyze_wavelet_coherence(self, policy_series, outcome_series):
+        """
+        Wavelet coherence analysis to identify time-varying lag relationships.
+
+        Uses continuous wavelet transform to find frequency-dependent coherence
+        between policy and outcome series.
+        """
+        if not PYWT_AVAILABLE:
+            return {'significant': False, 'error': 'PyWavelets not installed'}
+
+        policy_vals = policy_series.values.astype(float)
+        outcome_vals = outcome_series.values.astype(float)
+        n = len(policy_vals)
+
+        # Standardize
+        policy_std = (policy_vals - policy_vals.mean()) / (policy_vals.std() + 1e-10)
+        outcome_std = (outcome_vals - outcome_vals.mean()) / (outcome_vals.std() + 1e-10)
+
+        try:
+            # Compute CWT for both series
+            scales = np.arange(2, min(n // 4, 64))
+            if len(scales) < 2:
+                return {'significant': False, 'error': 'Series too short for wavelet analysis'}
+
+            coef_policy, freqs_policy = pywt.cwt(policy_std, scales, 'morl')
+            coef_outcome, freqs_outcome = pywt.cwt(outcome_std, scales, 'morl')
+
+            # Cross-wavelet power
+            cross_power = np.abs(coef_policy * np.conj(coef_outcome))
+
+            # Wavelet coherence approximation via smoothed cross-spectrum
+            smooth_window = max(3, n // 50)
+            from scipy.ndimage import uniform_filter1d
+
+            smooth_cross = uniform_filter1d(cross_power, size=smooth_window, axis=1)
+            smooth_policy = uniform_filter1d(np.abs(coef_policy) ** 2, size=smooth_window, axis=1)
+            smooth_outcome = uniform_filter1d(np.abs(coef_outcome) ** 2, size=smooth_window, axis=1)
+
+            coherence = smooth_cross ** 2 / (smooth_policy * smooth_outcome + 1e-10)
+
+            # Average coherence across time for each scale
+            mean_coherence_by_scale = coherence.mean(axis=1)
+
+            # Convert scales to approximate periods in days
+            periods = 1.0 / (freqs_policy + 1e-10)
+
+            # Find the scale/period band with highest coherence
+            best_scale_idx = np.argmax(mean_coherence_by_scale)
+            best_period = float(periods[best_scale_idx])
+            best_coherence = float(mean_coherence_by_scale[best_scale_idx])
+
+            # Phase difference at the best scale → approximate lag
+            phase = np.angle(np.mean(coef_policy[best_scale_idx] * np.conj(coef_outcome[best_scale_idx])))
+            estimated_lag_days = float(phase * best_period / (2 * np.pi))
+
+            # Significance: coherence > 0.5 is a common threshold
+            significant = best_coherence > 0.5
+
+            return {
+                'best_period_days': round(best_period, 1),
+                'best_coherence': round(best_coherence, 4),
+                'estimated_lag_days': round(abs(estimated_lag_days), 1),
+                'significant': bool(significant),
+                'coherence_by_period': {
+                    round(float(p), 1): round(float(c), 4)
+                    for p, c in zip(periods[::max(1, len(periods)//10)],
+                                    mean_coherence_by_scale[::max(1, len(periods)//10)])
+                }
             }
-            
-        # Filter regions by quality threshold
-        high_quality_regions = [
-            region for region, metrics in quality_metrics.items()
-            if metrics['quality_score'] >= 0.7 and metrics['completeness'] >= min_data_completeness
+        except Exception as e:
+            return {'significant': False, 'error': str(e)}
+
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
+
+    def analyze_country(self, country):
+        """Run all analysis methods for a single country."""
+        pairs = self._prepare_country_series(country)
+        if not pairs:
+            return {'error': f'Insufficient data for {country}'}
+
+        country_results = {}
+        for outcome_col, (policy_s, outcome_s) in pairs.items():
+            pair_key = f"{self.policy_col}_vs_{outcome_col}"
+
+            ccf_result = self._analyze_ccf(policy_s, outcome_s)
+            granger_result = self._analyze_granger(policy_s, outcome_s)
+            wavelet_result = self._analyze_wavelet_coherence(policy_s, outcome_s)
+
+            # Consensus: combine lag estimates from significant methods
+            lag_estimates = []
+            methods_significant = 0
+            methods_total = 3
+
+            if ccf_result.get('significant') and ccf_result.get('best_lag') is not None:
+                lag_estimates.append(ccf_result['best_lag'])
+                methods_significant += 1
+            if granger_result.get('significant') and granger_result.get('best_lag') is not None:
+                lag_estimates.append(granger_result['best_lag'])
+                methods_significant += 1
+            if wavelet_result.get('significant') and wavelet_result.get('estimated_lag_days') is not None:
+                lag_estimates.append(wavelet_result['estimated_lag_days'])
+                methods_significant += 1
+
+            consensus_lag = round(float(np.median(lag_estimates)), 1) if lag_estimates else None
+
+            country_results[pair_key] = {
+                'ccf': ccf_result,
+                'granger': granger_result,
+                'wavelet': wavelet_result,
+                'consensus': {
+                    'methods_significant': methods_significant,
+                    'methods_total': methods_total,
+                    'lag_estimates': [round(float(x), 1) for x in lag_estimates],
+                    'consensus_lag_days': consensus_lag
+                }
+            }
+
+        return country_results
+
+    def run_analysis(self, csv_path):
+        """
+        Run the full analysis pipeline: load data, analyze each country,
+        compute aggregate results, and save everything.
+        """
+        self.load_data(csv_path)
+
+        all_results = {}
+        for country in tqdm(self.countries, desc="Analyzing countries"):
+            result = self.analyze_country(country)
+            all_results[country] = result
+
+            # Save per-country result
+            country_file = os.path.join(self.run_dir, f"{country}_results.json")
+            with open(country_file, 'w') as f:
+                json.dump({'country': country, 'results': result}, f, indent=2)
+
+        self.results = all_results
+
+        # Compute and save aggregate results
+        aggregate = self._compute_aggregate()
+        agg_file = os.path.join(self.run_dir, 'aggregate_results.json')
+        with open(agg_file, 'w') as f:
+            json.dump(aggregate, f, indent=2)
+
+        # Save run summary
+        self._save_summary(aggregate)
+
+        print(f"\nResults saved to: {self.run_dir}")
+        return aggregate
+
+    def _compute_aggregate(self):
+        """Aggregate per-country results into cross-country summary."""
+        aggregate = {
+            'countries_analyzed': self.countries,
+            'analysis_timestamp': self.run_timestamp,
+            'pair_summaries': {}
+        }
+
+        # Collect all pair keys
+        all_pair_keys = set()
+        for country_result in self.results.values():
+            if isinstance(country_result, dict) and 'error' not in country_result:
+                all_pair_keys.update(country_result.keys())
+
+        for pair_key in sorted(all_pair_keys):
+            consensus_lags = []
+            significant_countries = []
+            country_details = {}
+
+            for country in self.countries:
+                cr = self.results.get(country, {})
+                if isinstance(cr, dict) and pair_key in cr:
+                    pair_result = cr[pair_key]
+                    consensus = pair_result.get('consensus', {})
+                    lag = consensus.get('consensus_lag_days')
+                    n_sig = consensus.get('methods_significant', 0)
+
+                    country_details[country] = {
+                        'consensus_lag': lag,
+                        'methods_significant': n_sig
+                    }
+
+                    if lag is not None and n_sig >= 1:
+                        consensus_lags.append(lag)
+                        significant_countries.append(country)
+
+            summary = {
+                'countries_with_significant_results': significant_countries,
+                'n_significant': len(significant_countries),
+                'n_total': len(self.countries),
+                'country_details': country_details
+            }
+
+            if consensus_lags:
+                summary['median_lag_days'] = round(float(np.median(consensus_lags)), 1)
+                summary['mean_lag_days'] = round(float(np.mean(consensus_lags)), 1)
+                summary['std_lag_days'] = round(float(np.std(consensus_lags)), 1)
+                summary['min_lag_days'] = round(float(min(consensus_lags)), 1)
+                summary['max_lag_days'] = round(float(max(consensus_lags)), 1)
+            else:
+                summary['median_lag_days'] = None
+
+            aggregate['pair_summaries'][pair_key] = summary
+
+        return aggregate
+
+    def _save_summary(self, aggregate):
+        """Save a human-readable summary text file."""
+        lines = [
+            "Policy Effectiveness Lag Analysis — Run Summary",
+            "=" * 50,
+            f"Run ID: {self.run_timestamp}",
+            f"Countries analyzed: {len(self.countries)}",
+            f"Methods: Cross-correlation, Granger causality, Wavelet coherence",
+            f"Max lag tested: {self.max_lag} days",
+            f"Significance level: {self.significance_level}",
+            ""
         ]
-        
-        print(f"Identified {len(high_quality_regions)} high-quality regions out of {len(quality_metrics)} total regions")
-        return high_quality_regions
+
+        for pair_key, summary in aggregate.get('pair_summaries', {}).items():
+            lines.append(f"\n--- {pair_key} ---")
+            n_sig = summary.get('n_significant', 0)
+            n_total = summary.get('n_total', 0)
+            lines.append(f"Countries with significant results: {n_sig}/{n_total}")
+
+            if summary.get('median_lag_days') is not None:
+                lines.append(f"Median lag: {summary['median_lag_days']} days")
+                lines.append(f"Mean lag: {summary['mean_lag_days']} days (std: {summary['std_lag_days']})")
+                lines.append(f"Range: {summary['min_lag_days']} - {summary['max_lag_days']} days")
+
+                for country in summary.get('countries_with_significant_results', []):
+                    detail = summary['country_details'].get(country, {})
+                    lines.append(f"  {country}: lag={detail.get('consensus_lag')} days "
+                                 f"({detail.get('methods_significant')} methods significant)")
+            else:
+                lines.append("No significant lag relationships found.")
+
+        summary_path = os.path.join(self.run_dir, 'run_summary.txt')
+        with open(summary_path, 'w') as f:
+            f.write('\n'.join(lines))
+
+
+# ======================================================================
+# CLI entry point
+# ======================================================================
+
+if __name__ == "__main__":
+    analyzer = PolicyLagAnalyzer(
+        countries=['United States', 'United Kingdom', 'Germany', 'France',
+                   'Italy', 'Spain', 'Canada', 'Brazil', 'India', 'Sweden'],
+        max_lag=30,
+        min_data_points=180,
+        significance_level=0.05
+    )
+
+    csv_path = 'owid-covid-data.csv'
+    if not os.path.exists(csv_path):
+        print(f"Error: {csv_path} not found.")
+    else:
+        results = analyzer.run_analysis(csv_path)
+        print("\nDone.")

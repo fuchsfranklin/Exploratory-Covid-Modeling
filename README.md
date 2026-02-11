@@ -1,145 +1,112 @@
-# Exploratory COVID-19 Modeling: Because There Weren't Already Enough Predictive COVID-19 Projects
+# Exploratory COVID-19 Modeling
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B.svg)](https://streamlit.io)
 
-*Because if there's one thing the world was missing, it was my take on COVID-19 modeling (not).*
+An exploratory analysis of COVID-19 pandemic dynamics, focusing on three questions
+that go beyond standard case/death forecasting:
 
-## Project Overview
-
-Let's be honest: by now, COVID-19 prediction models are almost their own pandemic. But while everyone and their neighbor has forecasted cases and deaths, I wanted to explore the pandemic data myself as well, maybe with questions that are slightly less straightforward than predicting cases and waves post-hoc. With demographic data, I thought it was interesting to consider how hospitals really felt the strain, when people collectively ran out of steam (a.k.a. pandemic fatigue), and why policies sometimes seemed to work on their own mysterious schedule.
+1. Can we predict ICU strain from lagged indicators?
+2. When do populations exhibit "pandemic fatigue" — rising cases despite strict restrictions?
+3. How long does it take for policy changes to show measurable effects?
 
 ## Key Findings
 
 ### Healthcare Strain Prediction
-- **MAE: 4.11** ICU patients per million
-- **Top Predictor:** Death rates (43.66% importance)
-- **Second:** Hospital patients (11.31%)
-- **Training:** 31,285 samples with 55 engineered features
+- **MAE: ~5.5** ICU patients per million (genuine forward prediction using only lagged features)
+- **Top predictor:** Deaths per million (7-day lag) — 44.7% importance
+- **Model:** Gradient Boosting with 46 lagged + demographic features
+- **Design:** No contemporaneous features used, enabling real 7-14 day forecasting
 
 ### Pandemic Fatigue Detection
-- **Definition:** High stringency (≥60) + cases rising >20%
-- **Accuracy:** 89.1% balanced accuracy, 91.3% ROC AUC
-- **Coverage:** 10 major countries analyzed
+- **Balanced accuracy:** 0.908, **ROC AUC:** 0.969
+- **Definition:** Stringency ≥ 60 AND cases rising > 20% over 14 days
+- **Model:** Logistic Regression with interaction and volatility features
+- **Finding:** ~8% of country-days across 176 countries meet fatigue criteria
 
-### Policy Effectiveness
+### Policy Effectiveness Lag
+- **Reproduction rate:** 10/10 countries show significant lag, median ~12 days
+- **Deaths:** 5/10 countries significant, median ~15 days
 - **Methods:** Cross-correlation, Granger causality, wavelet coherence
-- **Typical Lag:** 7-21 days between policy and effect
-- **Insight:** Early action critical due to implementation lag
+- **Insight:** Policy effects on R are more consistently detectable than on raw case counts
 
 ## Quick Start
 
-### Installation
-
 ```bash
-git clone https://github.com/yourusername/Exploratory-Covid-Modeling.git
-cd Exploratory-Covid-Modeling
 pip install -r requirements.txt
-```
-
-### Launch Dashboard
-
-```bash
 streamlit run dashboard/app.py
 ```
 
-### Run Analysis
+## Run Analysis Scripts
 
 ```bash
 python scripts/healthcare_strain.py
+python scripts/pandemic_fatigue.py
+python scripts/policy_effectiveness_lag.py
 ```
+
+Each script produces timestamped results in `results/<analysis>/`.
 
 ## Repository Structure
 
 ```
-.
-├── .streamlit/              # Streamlit deployment config
-├── dashboard/               # Interactive dashboard
-│   └── app.py
-├── docs/                    # Documentation
-├── eda_outputs/             # Visualizations
-├── results/                 # Analysis results
+├── dashboard/
+│   └── app.py                  # Streamlit dashboard (reads from results/)
+├── scripts/
+│   ├── healthcare_strain.py    # ICU prediction model
+│   ├── pandemic_fatigue.py     # Fatigue classification model
+│   └── policy_effectiveness_lag.py  # Lag analysis (CCF, Granger, wavelet)
+├── results/                    # Model outputs (auto-generated)
 │   ├── healthcare_strain/
 │   ├── pandemic_fatigue/
 │   └── policy_effectiveness/
-├── scripts/                 # Core analysis scripts
-│   ├── healthcare_strain.py
-│   ├── pandemic_fatigue.py
-│   └── policy_effectiveness_lag.py
-├── example_analysis.ipynb   # Jupyter examples
-├── LICENSE                  # MIT License
-├── owid-covid-data.csv      # Main dataset
-├── QUICKSTART.md            # Quick start guide
-├── README.md                # This file
-└── requirements.txt         # Dependencies
+├── owid-covid-data.csv         # OWID dataset
+├── example_analysis.ipynb      # Jupyter notebook examples
+├── requirements.txt
+└── LICENSE
 ```
 
-## Methodologies
+## Methodology Notes
 
-### Healthcare Strain Analysis
-- Gradient boosting regression with time-series features
-- 55 predictive features (lagged indicators, policies, demographics)
-- Target: ICU patients per million
-- Validation: Time-series cross-validation
+### Healthcare Strain
+Uses only **lagged** versions of dynamic features (7 and 14 day lags) as predictors.
+This avoids data leakage from contemporaneous indicators (e.g., using current hospital
+patients to predict current ICU patients) and enables genuine forward-looking prediction.
+The tradeoff is higher MAE compared to models that use contemporaneous features, but the
+predictions are actually useful for planning.
 
-### Pandemic Fatigue Analysis
-- Binary classification of fatigue periods
-- Features: Stringency, demographics, case trends, vaccination
-- Definition: Cases increase despite high restrictions
-- Methods: Logistic regression, gradient boosting
+### Pandemic Fatigue
+A binary classification problem: is this country-day a "fatigue period"? Features include
+smoothed epidemiological indicators, their interactions with stringency, rolling volatility,
+and z-scores. The class imbalance (~8% positive) is handled via balanced class weights.
 
-### Policy Effectiveness Analysis
-- Multiple time-series methods
-- Cross-correlation, Granger causality, wavelet coherence
-- Causal inference: Difference-in-differences, synthetic control
-- Regional analysis for high-quality data subsets
+### Policy Effectiveness
+Three complementary methods are applied per country:
+- **Cross-correlation:** Identifies the lag with strongest negative correlation between
+  differenced stringency and differenced outcome series
+- **Granger causality:** Tests whether lagged stringency values improve prediction of outcomes
+- **Wavelet coherence:** Captures time-varying, frequency-dependent relationships
 
-## Documentation
+Results are aggregated across countries with consensus lag estimates.
 
-- [Quick Start Guide](QUICKSTART.md)
-- [Healthcare Strain Report](docs/healthcare_strain_analysis_report.md)
-- [Pandemic Fatigue Report](docs/pandemic_fatigue_analysis_report.md)
-- [Policy Effectiveness Report](docs/policy_effectiveness_lag_analysis_report.md)
-- [Integrated Findings](docs/integrated_findings_report.md)
+## Limitations
 
-## Dashboard Features
+- Analysis is retrospective — all data is historical
+- The OWID dataset has varying completeness across countries and time periods
+- Fatigue definition is a simplification; real compliance behavior is more nuanced
+- Policy lag analysis uses aggregate stringency index, not individual policy components
+- No causal claims are made — these are observational associations
 
-- **Overview:** Global statistics and interactive world map
-- **Healthcare Strain:** ICU predictions with feature importance
-- **Pandemic Fatigue:** Detection timeline and metrics
-- **Policy Effectiveness:** Lag analysis with correlations
-- **Cross-Country Comparison:** Multi-country metric comparison
+## Data Source
 
-## Data Sources
-
-- [Our World in Data COVID-19 Dataset](https://ourworldindata.org/covid-cases)
-- [COVID-19 Twitter Sentiment Dataset](https://github.com/thepanacealab/covid19_twitter)
-- [Google COVID-19 Community Mobility Reports](https://www.google.com/covid19/mobility/)
-- [Oxford COVID-19 Government Response Tracker](https://www.bsg.ox.ac.uk/research/research-projects/covid-19-government-response-tracker)
-
-## Research Contributions
-
-1. **Methodological Innovation:** Data-driven pandemic fatigue definition
-2. **Comparative Analysis:** Healthcare strain predictors across phases
-3. **Policy Evaluation:** Multi-method effectiveness assessment
-4. **Temporal Insights:** Time-varying intervention relationships
-5. **Data Quality:** Critical evaluation of pandemic data
+[Our World in Data COVID-19 Dataset](https://ourworldindata.org/covid-cases),
+which incorporates the Oxford COVID-19 Government Response Tracker for policy stringency.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
-## Contributors
+## Author
 
 Franklin Fuchs
-
-## Acknowledgments
-
-- Data provided by [Our World in Data](https://ourworldindata.org/)
-- Built with [Streamlit](https://streamlit.io/)
-- Analysis powered by scikit-learn, pandas, and plotly
-
-## Contact
-
-For questions or collaboration opportunities, please open an issue on GitHub.
