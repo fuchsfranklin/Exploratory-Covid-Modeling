@@ -34,7 +34,12 @@ wheels/
 
 # Data files (keep structure but ignore large data)
 *.csv
-!owid-covid-data.csv
+# owid-covid-data.csv (~98 MB) is not tracked; get it with: python scripts/get_data.py
+owid-covid-data.csv
+*.csv.part
+!results/**/feature_coefficients.csv
+!results/**/feature_importances.csv
+!results/**/test_predictions_vs_actual.csv
 *.xlsx
 *.xls
 

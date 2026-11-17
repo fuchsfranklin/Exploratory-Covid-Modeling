@@ -1,0 +1,30 @@
+Healthcare Strain Prediction - Run Summary
+==================================================
+Run ID: 20261117_125539
+Model: HistGB
+Target: icu_patients_per_million (model fits change vs icu_patients_per_million_lag7)
+Tuned: False
+Best params: default
+Features: 50
+Train: 30905 rows, Test: 7727 rows
+
+Evaluation:
+  MAE:  0.6050 (avg error in ICU patients per million)
+  RMSE: 0.8869
+  Baselines (MAE on the same test rows):
+    ICU 7 days earlier: 0.5158 (model on those 7727 rows: 0.6050)
+    Training-period median: 6.5188
+
+Note: predictors are values from 7 or more days before the prediction date.
+
+Top 10 Features:
+  icu_patients_per_million_lag14: 0.1493 (14.9%)
+  icu_patients_per_million_lag7: 0.1308 (13.1%)
+  icu_patients_per_million_roll_avg14_lag7: 0.0992 (9.9%)
+  reproduction_rate_roll_avg14_lag7: 0.0736 (7.4%)
+  hosp_patients_per_million_lag7: 0.0730 (7.3%)
+  reproduction_rate_lag7: 0.0622 (6.2%)
+  reproduction_rate_roll_avg7_lag7: 0.0611 (6.1%)
+  total_boosters_per_hundred_roll_avg14_lag7: 0.0480 (4.8%)
+  hosp_patients_per_million_lag14: 0.0372 (3.7%)
+  reproduction_rate_lag14: 0.0345 (3.4%)

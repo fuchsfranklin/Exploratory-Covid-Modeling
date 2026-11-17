@@ -1,26 +1,31 @@
 """
 Healthcare System Strain Prediction
 
-Predicts ICU patient counts per million using a Gradient Boosting or Random Forest
-regression model. Features include lagged epidemiological indicators, rolling averages,
-demographic factors, and policy measures.
+Predicts ICU patients per million one week ahead. Inputs are values from 7 and
+14 days earlier (including ICU itself), lagged rolling means, and country
+demographics. Nothing from the prediction day is used.
 
-Key design decisions:
-- Only LAGGED features of dynamic indicators are used as predictors (no contemporaneous
-  values) to avoid data leakage and enable genuine forward-looking prediction.
-- KNN imputation and MinMax scaling are applied within a sklearn Pipeline to prevent
-  train/test leakage.
-- Chronological train/test split (last 20%) respects time-series ordering.
+Design notes:
+- By default the model fits the week-over-week change in ICU and adds it back to
+  last week's value (predict_change=True). Fitting the level directly lost to
+  plain persistence; see scripts/icu_model_comparison.py.
+- Split is by date: the last 20% of dated rows (Nov 2022 onward) are the test set.
+- Imputation/scaling (for the sklearn tree models) sit inside the Pipeline, so they
+  are fitted on training rows only.
+- Every run reports two baselines next to the model MAE: last week's ICU value, and
+  the training-period median.
 """
 
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import (GradientBoostingRegressor, HistGradientBoostingRegressor,
+                              RandomForestRegressor)
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split, GridSearchCV, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.impute import KNNImputer
+from sklearn.inspection import permutation_importance
 import os
 import joblib
 import datetime
@@ -33,7 +38,7 @@ os.makedirs(RESULTS_BASE_DIR, exist_ok=True)
 class HealthcareStrainPredictor:
     """
     Predicts healthcare strain (ICU patients per million) using configurable
-    regression models with lagged features to enable genuine forecasting.
+    regression models. All dynamic inputs are lagged by at least 7 days.
     """
 
     def __init__(self,
@@ -45,7 +50,8 @@ class HealthcareStrainPredictor:
                  model_type='GradientBoosting',
                  use_hyperparameter_tuning=False,
                  n_neighbors_imputation=5,
-                 cv_splits=3):
+                 cv_splits=3,
+                 predict_change=False):
         """
         Args:
             base_dynamic_feature_cols: Time-varying columns to create lagged features from.
@@ -57,7 +63,12 @@ class HealthcareStrainPredictor:
             use_hyperparameter_tuning: Whether to run GridSearchCV.
             n_neighbors_imputation: KNN imputer neighbors.
             cv_splits: TimeSeriesSplit folds for cross-validation.
+            predict_change: If True, the model predicts the change from the target's
+                value at the shortest lag, and that value is added back. Requires
+                target_col to be in base_dynamic_feature_cols.
+            model_type also accepts 'HistGB' (histogram gradient boosting, absolute loss).
         """
+        self.predict_change = predict_change
         self.base_dynamic_feature_cols = base_dynamic_feature_cols
         self.static_feature_cols = static_feature_cols
         self.target_col = target_col
@@ -120,7 +131,7 @@ class HealthcareStrainPredictor:
                 df[roll_name] = df.groupby('location')[col].transform(
                     lambda x: x.rolling(window=window, min_periods=1).mean()
                 )
-                # Lag the rolling average too — use min lag to avoid leakage
+                # Lag the rolling average too (by the min lag) so it can't see the target day
                 lagged_roll_name = f'{roll_name}_lag{min(self.lag_periods)}'
                 df[lagged_roll_name] = df.groupby('location')[roll_name].shift(min(self.lag_periods))
                 current_features.append(lagged_roll_name)
@@ -134,6 +145,10 @@ class HealthcareStrainPredictor:
         # Drop rows with missing target or all-NaN features
         df.dropna(subset=[self.target_col], inplace=True)
         df.dropna(subset=self.feature_cols, how='all', inplace=True)
+        self._lag_col = f'{self.target_col}_lag{min(self.lag_periods)}'
+        if self.predict_change:
+            # need last week's value to add the predicted change back to
+            df.dropna(subset=[self._lag_col], inplace=True)
 
         # Keep original data aligned for saving predictions with metadata
         self.data = df_orig.loc[df.index].copy()
@@ -181,37 +196,61 @@ class HealthcareStrainPredictor:
                 'regressor__n_estimators': [100, 200],
                 'regressor__max_depth': [10, 20, None]
             }
+        elif self.model_type == 'HistGB':
+            # Handles missing values itself, so no imputer; absolute-error loss
+            # matches the MAE we report. Best of the variants in icu_model_comparison.py.
+            model = HistGradientBoostingRegressor(loss='absolute_error', max_iter=300,
+                                                  learning_rate=0.05, min_samples_leaf=50,
+                                                  random_state=42)
+            param_grid = {
+                'regressor__learning_rate': [0.03, 0.05, 0.1],
+                'regressor__min_samples_leaf': [20, 50, 100]
+            }
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")
 
-        pipeline = Pipeline([
-            ('imputer', KNNImputer(n_neighbors=self.n_neighbors_imputation)),
-            ('scaler', MinMaxScaler()),
-            ('regressor', model)
-        ])
+        if self.model_type == 'HistGB':
+            pipeline = Pipeline([('regressor', model)])
+        else:
+            pipeline = Pipeline([
+                ('imputer', KNNImputer(n_neighbors=self.n_neighbors_imputation)),
+                ('scaler', MinMaxScaler()),
+                ('regressor', model)
+            ])
+
+        y_fit = self.y_train_series
+        if self.predict_change:
+            y_fit = self.y_train_series - self.X_train_df[self._lag_col]
 
         if self.use_hyperparameter_tuning:
             print(f"Tuning {self.model_type} hyperparameters...")
             tscv = TimeSeriesSplit(n_splits=self.cv_splits)
             grid = GridSearchCV(pipeline, param_grid, cv=tscv,
                                 scoring='neg_mean_absolute_error', n_jobs=-1, verbose=1)
-            grid.fit(self.X_train_df, self.y_train_series)
+            grid.fit(self.X_train_df, y_fit)
             self.model_pipeline = grid.best_estimator_
             self.best_params_ = grid.best_params_
             print(f"Best parameters: {self.best_params_}")
         else:
             print(f"Training {self.model_type} with defaults...")
             self.model_pipeline = pipeline
-            self.model_pipeline.fit(self.X_train_df, self.y_train_series)
+            self.model_pipeline.fit(self.X_train_df, y_fit)
             self.best_params_ = "default"
 
-        # Feature importances
+        # Feature importances (impurity-based if the model has them, otherwise
+        # permutation importance on a training sample; normalised to sum to 1)
         regressor = self.model_pipeline.named_steps['regressor']
         if hasattr(regressor, 'feature_importances_'):
-            self.feature_importances_ = pd.Series(
-                regressor.feature_importances_,
-                index=self.X_train_df.columns
-            ).sort_values(ascending=False)
+            imp = regressor.feature_importances_
+        else:
+            sample = self.X_train_df.sample(min(5000, len(self.X_train_df)), random_state=42)
+            pi = permutation_importance(self.model_pipeline, sample, y_fit.loc[sample.index],
+                                        scoring='neg_mean_absolute_error', n_repeats=3,
+                                        random_state=42, n_jobs=-1)
+            imp = np.clip(pi.importances_mean, 0, None)
+            imp = imp / imp.sum() if imp.sum() > 0 else imp
+        self.feature_importances_ = pd.Series(
+            imp, index=self.X_train_df.columns).sort_values(ascending=False)
 
         print("Training complete.")
 
@@ -223,16 +262,38 @@ class HealthcareStrainPredictor:
         """Make predictions using the trained pipeline."""
         if self.model_pipeline is None:
             raise ValueError("Model not trained.")
-        return self.model_pipeline.predict(X_df[self.feature_cols])
+        preds = self.model_pipeline.predict(X_df[self.feature_cols])
+        if self.predict_change:
+            preds = np.clip(preds + X_df[self._lag_col].values, 0, None)
+        return preds
 
     def evaluate_model(self):
         """Evaluate on the held-out test set. Returns (MAE, RMSE)."""
         if self.model_pipeline is None:
             raise ValueError("Model not trained.")
-        preds = self.model_pipeline.predict(self.X_test_df)
+        preds = self.predict(self.X_test_df)
         mae = mean_absolute_error(self.y_test_series, preds)
         rmse = np.sqrt(mean_squared_error(self.y_test_series, preds))
+        self.baselines_ = self._baseline_maes(preds)
         return mae, rmse
+
+    def _baseline_maes(self, preds):
+        """MAE of naive forecasts on the same test rows, so the model MAE has a reference.
+
+        - persistence: ICU value 7 days earlier (same 7-day horizon as the model)
+        - train_median: one constant, the median ICU level in the training period
+        """
+        y = self.y_test_series
+        out = {'train_median': float(mean_absolute_error(
+            y, np.full(len(y), self.y_train_series.median())))}
+        lag_col = f'{self.target_col}_lag{min(self.lag_periods)}'
+        if lag_col in self.X_test_df.columns:
+            mask = self.X_test_df[lag_col].notna().values
+            out['persistence_lag7'] = float(mean_absolute_error(
+                y[mask], self.X_test_df.loc[mask, lag_col]))
+            out['model_on_same_rows'] = float(mean_absolute_error(y[mask], preds[mask]))
+            out['n_rows_with_lag'] = int(mask.sum())
+        return out
 
     # ------------------------------------------------------------------
     # Saving results
@@ -251,11 +312,15 @@ class HealthcareStrainPredictor:
             'lag_periods': self.lag_periods,
             'rolling_avg_windows': self.rolling_avg_windows,
             'hyperparameter_tuning': self.use_hyperparameter_tuning,
+            'predict_change': self.predict_change,
             'best_params': str(self.best_params_),
             'mae': mae,
             'rmse': rmse,
             'train_shape': list(self.X_train_df.shape),
             'test_shape': list(self.X_test_df.shape),
+            'test_date_range': [str(self.data.loc[self.test_indices, 'date'].min())[:10],
+                                str(self.data.loc[self.test_indices, 'date'].max())[:10]],
+            'baseline_mae': getattr(self, 'baselines_', None),
         }
         with open(os.path.join(self.run_results_dir, 'run_details.json'), 'w') as f:
             json.dump(details, f, indent=2)
@@ -288,11 +353,12 @@ class HealthcareStrainPredictor:
 
     def _generate_summary(self, mae, rmse):
         lines = [
-            "Healthcare Strain Prediction — Run Summary",
+            "Healthcare Strain Prediction - Run Summary",
             "=" * 50,
             f"Run ID: {self.run_id}",
             f"Model: {self.model_type}",
-            f"Target: {self.target_col}",
+            f"Target: {self.target_col}"
+            + (f" (model fits change vs {self._lag_col})" if self.predict_change else ""),
             f"Tuned: {self.use_hyperparameter_tuning}",
             f"Best params: {self.best_params_}",
             f"Features: {len(self.feature_cols)}",
@@ -301,9 +367,18 @@ class HealthcareStrainPredictor:
             "Evaluation:",
             f"  MAE:  {mae:.4f} (avg error in ICU patients per million)",
             f"  RMSE: {rmse:.4f}",
+        ]
+        b = getattr(self, 'baselines_', None) or {}
+        if b:
+            lines.append("  Baselines (MAE on the same test rows):")
+            if 'persistence_lag7' in b:
+                lines.append(f"    ICU 7 days earlier: {b['persistence_lag7']:.4f} "
+                             f"(model on those {b['n_rows_with_lag']} rows: "
+                             f"{b['model_on_same_rows']:.4f})")
+            lines.append(f"    Training-period median: {b['train_median']:.4f}")
+        lines += [
             "",
-            "NOTE: Only lagged features are used as predictors (no contemporaneous",
-            "dynamic values) to enable genuine forward-looking prediction.",
+            "Note: predictors are values from 7 or more days before the prediction date.",
         ]
 
         if self.feature_importances_ is not None:
@@ -327,15 +402,19 @@ class HealthcareStrainPredictor:
 # ======================================================================
 
 if __name__ == "__main__":
-    MODEL_CHOICE = 'GradientBoosting'
+    MODEL_CHOICE = 'HistGB'
     PERFORM_TUNING = False
     LAG_PERIODS = [7, 14]
     ROLLING_WINDOWS = [7, 14]
 
     target = 'icu_patients_per_million'
 
-    # Dynamic features — will be LAGGED before use as predictors
+    # Dynamic features. These get lagged before use as predictors.
+    # The target's own history (ICU 7 and 14 days ago) is included, and the model fits
+    # the week-over-week change (predict_change=True). Without these, the model lost
+    # badly to simply carrying last week's ICU value forward (Nov 2026 check).
     base_dynamic_features = [
+        'icu_patients_per_million',
         'new_cases_smoothed_per_million',
         'new_deaths_smoothed_per_million',
         'reproduction_rate',
@@ -369,6 +448,7 @@ if __name__ == "__main__":
         rolling_avg_windows=ROLLING_WINDOWS,
         model_type=MODEL_CHOICE,
         use_hyperparameter_tuning=PERFORM_TUNING,
+        predict_change=True,
     )
 
     csv_path = 'owid-covid-data.csv'

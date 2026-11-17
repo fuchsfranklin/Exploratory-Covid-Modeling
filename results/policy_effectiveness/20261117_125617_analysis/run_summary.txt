@@ -1,6 +1,6 @@
-Policy Effectiveness Lag Analysis — Run Summary
+Policy Effectiveness Lag Analysis - Run Summary
 ==================================================
-Run ID: 20260211_140506
+Run ID: 20261117_125617
 Countries analyzed: 10
 Methods: Cross-correlation, Granger causality, Wavelet coherence
 Max lag tested: 30 days

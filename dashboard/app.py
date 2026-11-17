@@ -112,13 +112,13 @@ if page == "Overview":
     st.title("COVID-19 Pandemic Analysis Dashboard")
 
     st.markdown("""
-    This dashboard presents findings from three research analyses:
+    Three analyses of the OWID COVID-19 data:
 
-    1. **Healthcare Strain Prediction** — Forecasting ICU utilization using lagged indicators
-    2. **Pandemic Fatigue Detection** — Identifying periods where restrictions lose effectiveness
-    3. **Policy Effectiveness Analysis** — Quantifying the lag between policy changes and outcomes
+    1. **Healthcare strain:** ICU patients one week ahead, compared with last week's value
+    2. **Pandemic fatigue:** whether cases rise over the next two weeks despite strict restrictions
+    3. **Policy lag:** how long stringency changes take to show up in R, cases and deaths
 
-    Use the sidebar to navigate between analyses.
+    Pick an analysis from the sidebar.
     """)
 
     if df is not None:
@@ -178,20 +178,20 @@ elif page == "Healthcare Strain":
     st.title("Healthcare Strain Prediction")
 
     st.markdown("""
-    Predicts ICU utilization per million using a Gradient Boosting model trained on
-    **lagged** epidemiological indicators, demographic factors, and policy measures.
-
-    Only lagged features are used as predictors — no contemporaneous values — so the
-    model provides genuine forward-looking predictions (7-14 day horizon).
+    Predicts ICU patients per million one week ahead with gradient boosting. Inputs are
+    values from 7 and 14 days earlier (ICU, hospital, case and death counts, testing,
+    vaccination, stringency) plus country demographics. Nothing from the same day is used.
     """)
 
     details, importances, predictions = load_healthcare_results()
 
     if details:
+        base = details.get('baseline_mae') or {}
         col1, col2, col3 = st.columns(3)
         col1.metric("MAE", f"{details['mae']:.2f} ICU/million")
-        col2.metric("RMSE", f"{details['rmse']:.2f}")
-        col3.metric("Features", details['n_features'])
+        col2.metric("Baseline: last week's ICU",
+                    f"{base['persistence_lag7']:.2f}" if 'persistence_lag7' in base else "N/A")
+        col3.metric("RMSE", f"{details['rmse']:.2f}")
 
     if df is not None:
         # Country selector for ICU visualization
@@ -220,7 +220,7 @@ elif page == "Healthcare Strain":
                 fig.add_trace(go.Scatter(x=cdata['date'], y=cdata['stringency_index'],
                                          name='Stringency Index', line=dict(color='#00CC96')),
                               secondary_y=True)
-            fig.update_layout(title=f'ICU Utilization — {selected}', xaxis_title='Date',
+            fig.update_layout(title=f'ICU Utilization: {selected}', xaxis_title='Date',
                               height=500, hovermode="x unified",
                               legend=dict(orientation="h", y=1.02))
             fig.update_yaxes(title_text="Patients per Million", secondary_y=False)
@@ -264,20 +264,29 @@ elif page == "Pandemic Fatigue":
     st.title("Pandemic Fatigue Detection")
 
     st.markdown("""
-    **Pandemic fatigue** occurs when cases rise despite high restrictions, suggesting
-    reduced public compliance.
+    **Pandemic fatigue** here means cases rising despite strict restrictions.
 
-    **Definition used:** Stringency index ≥ 60 AND cases increasing > 20% over 14 days.
+    **Model question:** on a day when stringency is ≥ 60, will the average of daily cases
+    over the *next* 14 days exceed the past 14-day average by more than 20%? Features use
+    only data available on that day. The model is trained on days before mid-June 2021 and
+    tested on July 2021 onward, including countries it never saw in training.
+
+    The chart below shows the simpler *descriptive* rule (stringency ≥ 60 and cases already
+    up > 20% over the past 14 days). It describes the past and is not what the model predicts.
     """)
 
     fatigue_details, fatigue_coeffs = load_fatigue_results()
 
     if fatigue_details:
         eval_data = fatigue_details.get('evaluation', {})
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Balanced Accuracy", f"{eval_data.get('balanced_accuracy', 0):.3f}")
-        col2.metric("ROC AUC", f"{eval_data.get('roc_auc', 0):.3f}" if eval_data.get('roc_auc') else "N/A")
-        col3.metric("F1 (Fatigue Class)", f"{eval_data.get('f1_fatigue_class', 0):.3f}")
+        st.caption(f"Best model: {fatigue_details.get('best_model', 'n/a')}, "
+                   "later-period test set, countries seen in training. "
+                   "See the README for all models, the baseline and confidence intervals.")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("ROC AUC", f"{eval_data.get('roc_auc', 0):.3f}" if eval_data.get('roc_auc') else "N/A")
+        col2.metric("Average Precision", f"{eval_data.get('average_precision', 0):.3f}")
+        col3.metric("Balanced Accuracy", f"{eval_data.get('balanced_accuracy', 0):.3f}")
+        col4.metric("F1 (Fatigue Class)", f"{eval_data.get('f1_fatigue_class', 0):.3f}")
 
     if df is not None:
         countries_with_data = sorted([
@@ -313,7 +322,7 @@ elif page == "Pandemic Fatigue":
                                          marker=dict(color='red', size=6, symbol='x')),
                               secondary_y=False)
 
-            fig.update_layout(title=f'Pandemic Fatigue — {selected}', xaxis_title='Date',
+            fig.update_layout(title=f'Pandemic Fatigue: {selected}', xaxis_title='Date',
                               height=500, hovermode="x unified")
             fig.update_yaxes(title_text="Stringency Index", secondary_y=False)
             fig.update_yaxes(title_text="Cases per Million", secondary_y=True)
@@ -336,13 +345,13 @@ elif page == "Pandemic Fatigue":
 
     # Feature coefficients from actual model
     if fatigue_coeffs is not None:
-        st.subheader("Model Feature Coefficients")
-        st.caption("Coefficients from the trained logistic regression model. "
-                   "Positive = increases fatigue probability, Negative = decreases it.")
+        st.subheader("Feature Importance")
+        st.caption("Permutation importance of the best model: how much test ROC AUC drops "
+                   "when a feature is shuffled. Larger = the model relies on it more.")
         top_n = fatigue_coeffs.head(15)
         fig = px.bar(top_n, x='importance', y='feature', orientation='h',
-                     color='importance', color_continuous_scale='RdBu_r',
-                     title='Top 15 Feature Coefficients (by absolute value)')
+                     color='importance', color_continuous_scale='Blues',
+                     title='Top 15 Features (drop in ROC AUC when shuffled)')
         fig.update_layout(height=500, yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -359,7 +368,8 @@ elif page == "Policy Effectiveness":
 
     **Methods:** Cross-correlation, Granger causality, Wavelet coherence.
 
-    **Expected lag:** Typically 7-21 days due to incubation period and reporting delays.
+    "Countries significant" counts a country if any one of the three methods passes. The
+    wavelet check passes for nearly every pair, so look at how many methods agree.
     """)
 
     policy_results = load_policy_results()
@@ -392,7 +402,7 @@ elif page == "Policy Effectiveness":
                 lag_df = lag_df.sort_values('Lag (days)')
                 fig = px.bar(lag_df, x='Lag (days)', y='Country', orientation='h',
                              color='Lag (days)', color_continuous_scale='Viridis',
-                             title=f'Policy Lag by Country — {nice_name}')
+                             title=f'Policy Lag by Country: {nice_name}')
                 fig.update_layout(height=400, yaxis=dict(autorange="reversed"))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -422,7 +432,7 @@ elif page == "Policy Effectiveness":
                           secondary_y=True)
             fig.add_hline(y=1, line_dash="dash", line_color="gray",
                           annotation_text="R=1", secondary_y=True)
-            fig.update_layout(title=f'Stringency vs Reproduction Rate — {selected}',
+            fig.update_layout(title=f'Stringency vs Reproduction Rate: {selected}',
                               xaxis_title='Date', height=500, hovermode="x unified")
             fig.update_yaxes(title_text="Stringency Index", secondary_y=False)
             fig.update_yaxes(title_text="Reproduction Rate", secondary_y=True)
@@ -489,7 +499,7 @@ elif page == "Cross-Country Comparison":
                 cdata = df[df['location'] == country].sort_values('date')
                 fig.add_trace(go.Scatter(x=cdata['date'], y=cdata[metric],
                                          name=country, mode='lines'))
-            fig.update_layout(title=f'{metric_labels[metric]} — Multi-Country',
+            fig.update_layout(title=f'{metric_labels[metric]}, Multi-Country',
                               xaxis_title='Date', yaxis_title=metric_labels[metric],
                               height=600, hovermode='x unified')
             st.plotly_chart(fig, use_container_width=True)
@@ -521,12 +531,13 @@ elif page == "About":
 
     This project analyzes COVID-19 pandemic dynamics across three dimensions:
 
-    1. **Healthcare Strain** — Gradient Boosting regression predicting ICU utilization
-       from lagged epidemiological and demographic features.
-    2. **Pandemic Fatigue** — Logistic Regression classifying periods where cases rise
-       despite high-stringency restrictions.
-    3. **Policy Effectiveness** — Cross-correlation, Granger causality, and wavelet
-       coherence quantifying the lag between policy changes and outcomes.
+    1. **Healthcare strain:** gradient boosting that predicts ICU patients a week ahead
+       from lagged ICU, hospital, case and demographic data.
+    2. **Pandemic fatigue:** classifiers (logistic regression, gradient boosting, random
+       forest) predicting whether cases will rise over the next 14 days despite strict
+       restrictions, compared against a past-growth baseline.
+    3. **Policy lag:** cross-correlation, Granger causality and wavelet
+       coherence, estimating the lag between policy changes and outcomes.
 
     ### Data Source
 
@@ -539,10 +550,10 @@ elif page == "About":
 
     ### License
 
-    MIT License — see [LICENSE](https://github.com/yourusername/Exploratory-Covid-Modeling/blob/main/LICENSE).
+    MIT License, see [LICENSE](https://github.com/fuchsfranklin/Exploratory-Covid-Modeling/blob/main/LICENSE).
     """)
 
 # Footer
 st.markdown("---")
 st.caption("COVID-19 Pandemic Analysis Dashboard · Franklin Fuchs · "
-           "[GitHub](https://github.com/yourusername/Exploratory-Covid-Modeling)")
+           "[GitHub](https://github.com/fuchsfranklin/Exploratory-Covid-Modeling)")

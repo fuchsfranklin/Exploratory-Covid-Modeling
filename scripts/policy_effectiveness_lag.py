@@ -213,7 +213,9 @@ class PolicyLagAnalyzer:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                results = grangercausalitytests(combined[['outcome', 'policy']], maxlag=max_test_lag, verbose=False)
+                # 'verbose' was deprecated in statsmodels 0.14 and removed in 0.15;
+                # passing it made every Granger test fail silently on newer versions.
+                results = grangercausalitytests(combined[['outcome', 'policy']], maxlag=max_test_lag)
         except Exception as e:
             return {'significant': False, 'error': str(e)}
 
@@ -450,7 +452,7 @@ class PolicyLagAnalyzer:
     def _save_summary(self, aggregate):
         """Save a human-readable summary text file."""
         lines = [
-            "Policy Effectiveness Lag Analysis — Run Summary",
+            "Policy Effectiveness Lag Analysis - Run Summary",
             "=" * 50,
             f"Run ID: {self.run_timestamp}",
             f"Countries analyzed: {len(self.countries)}",
